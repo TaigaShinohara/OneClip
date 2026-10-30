@@ -63,6 +63,7 @@ protocol SingleCaptureInterface: AnyObject {
                        selected: @escaping @MainActor (CaptureSelection) -> Void,
                        cancelled: @escaping @MainActor () -> Void)
     func hideSelection() -> Bool
+    func settingsCaptureScope(for selection: CaptureSelection) throws -> SettingsCaptureScope?
     func showPermission()
     func hidePermission()
     func showProblem(activate: Bool)
@@ -74,6 +75,7 @@ protocol SingleCaptureInterface: AnyObject {
 }
 
 extension SingleCaptureInterface {
+    func settingsCaptureScope(for selection: CaptureSelection) throws -> SettingsCaptureScope? { nil }
     var captureEntryBlocked: Bool { false }
     var captureEnvironmentStatus: String { "利用状態を確認できません。復帰後にもう一度選んでください" }
     func validateCaptureEnvironment() -> Bool { true }
@@ -208,10 +210,14 @@ final class SingleCaptureCoordinator: ObservableObject {
     }
 
     func begin() {
+        begin(rememberOrigin: true)
+    }
+
+    private func begin(rememberOrigin: Bool) {
         guard canBegin else { return }
         guard validateEnvironment(startIfNeeded: true) else { return }
         guard !hasRetainedImage else { interface.showProblem(activate: true); return }
-        interface.rememberExternalApplication()
+        if rememberOrigin { interface.rememberExternalApplication() }
         guard preferences.hasSeenCaptureGuide else {
             let identifier = UUID()
             operationID = identifier
@@ -225,7 +231,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                 self.operationID = nil
                 guard !self.interface.captureEntryBlocked else { return }
                 self.preferences.hasSeenCaptureGuide = true
-                self.begin()
+                self.begin(rememberOrigin: false)
             }, cancelled: { [weak self] in
                 guard self?.phase == .onboarding, self?.operationID == identifier else { return }
                 self?.cancel()
@@ -289,7 +295,7 @@ final class SingleCaptureCoordinator: ObservableObject {
         }
         interface.hidePermission()
         phase = .idle
-        begin() // This is a new explicit operation, never a permission-change callback.
+        begin(rememberOrigin: false) // Explicit retry; preserve the task's return target across hiding the guide.
     }
 
     func cancel() {
@@ -336,7 +342,7 @@ final class SingleCaptureCoordinator: ObservableObject {
         interface.hideProblem()
         problem = nil
         phase = .idle
-        begin()
+        begin(rememberOrigin: false)
     }
 
     func retryCopy() {
@@ -393,14 +399,20 @@ final class SingleCaptureCoordinator: ObservableObject {
         guard validateEnvironment(), self.operationID == identifier else { return }
         do { _ = try RegionGeometry.plan(selection: selection, filterScale: selection.display.scale) }
         catch { fail("範囲を確認できません。もう一度選んでください。", stage: .selection); return }
+        let settings: SettingsCaptureScope?
+        do { settings = try interface.settingsCaptureScope(for: selection) }
+        catch {
+            fail("設定画面が変わりました。もう一度範囲を選んでください。", stage: .selection)
+            return
+        }
         guard interface.hideSelection() else {
             fail("選択画面を閉じられませんでした。撮影せずに中止しました。", stage: .selection)
             return
         }
         #if DEBUG
-        let request = SingleCaptureRequest(selection: selection, operationID: identifier, practice: selectedPractice)
+        let request = SingleCaptureRequest(selection: selection, operationID: identifier, settings: settings, practice: selectedPractice)
         #else
-        let request = SingleCaptureRequest(selection: selection, operationID: identifier)
+        let request = SingleCaptureRequest(selection: selection, operationID: identifier, settings: settings)
         #endif
         let expectedCount = clipboard.changeCount
         startWorker(identifier: identifier, expectedCount: expectedCount, existing: nil, request: request)
@@ -432,6 +444,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                         guard let self, self.operationID == identifier, !self.isStopping else { return false }
                         return self.validateEnvironment() && self.operationID == identifier
                     })
+                    if let settings = request.settings, !settings.validate() { throw ScreenshotError.settingsUnavailable }
                 } else { throw ScreenshotError.invalidSelection }
                 try self.checkCurrent(identifier)
                 self.retainedAsset = asset
@@ -487,6 +500,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                 } else if let failure = error as? ScreenshotError {
                     switch failure {
                     case .practiceUnavailable: message = "練習画面の内側で範囲を選んでください。画面を動かした場合は選び直してください。"
+                    case .settingsUnavailable: message = "設定画面が変わったため取得を中止しました。もう一度範囲を選んでください。"
                     case .displayChanged: message = "画面の構成が変わったため取得を中止しました。もう一度選んでください。"
                     case .imageLimitExceeded: message = "画像の大きさが上限を超えます。小さい範囲を選んでください。"
                     default: message = "画像を取得できませんでした。もう一度範囲を選んでください。"

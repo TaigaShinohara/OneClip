@@ -25,13 +25,15 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
     var collectionPresentationBlocksEntry: Bool { collectionExpanded || collectionConfirmationPending }
     var isOneClipActive: Bool { NSApp.isActive }
-    var settingsAreVisible: (@MainActor () -> Bool)?
+    var settingsBlockCapture: (@MainActor () -> Bool)?
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty }
     var captureEntryBlocked: Bool {
-        settingsAreVisible?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
+        settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
             || discardWindow != nil || !discardHandlers.isEmpty
     }
     private var selectionWindow: SelectionWindow?
+    private var selectionSettingsFrame: CGRect?
+    private var selectionSettingsScope: SettingsCaptureScope?
     private var captureGuideWindow: NSWindow?
     private var expandedSelectionHelp = false
     private var collectionGuideIsPresented = false
@@ -42,6 +44,8 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     private var feedbackWindow: NSPanel?
     private var feedbackRevision = 0
     private var lastExternalApplication: NSRunningApplication?
+    private weak var returnSettingsWindow: NSWindow?
+    private var returnToSettings = false
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var sessionMonitor: CaptureSessionMonitor!
     private var consoleUserMonitor: CaptureConsoleUserMonitor!
@@ -109,6 +113,8 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == processID,
                       let application = NSRunningApplication(processIdentifier: processID) else { return }
                 self.lastExternalApplication = application
+                self.returnToSettings = false
+                self.returnSettingsWindow = nil
                 if self.coordinator?.phase == .selecting { self.coordinator?.cancel() }
                 if self.collectionCoordinator?.phase == .selecting { self.collectionCoordinator?.cancelOperation() }
             }
@@ -169,11 +175,29 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         if let app = NSWorkspace.shared.frontmostApplication,
            app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             lastExternalApplication = app
+            returnToSettings = false
+            returnSettingsWindow = nil
+        } else if NSApp.isActive, let window = CaptureSettingsController.shared.captureWindow, window.isKeyWindow {
+            rememberSettingsWindow(window)
         }
     }
 
+    func rememberSettingsWindow(_ window: NSWindow?) {
+        guard NSApp.isActive, let window, window.isVisible, window.isKeyWindow else { return }
+        returnToSettings = true
+        returnSettingsWindow = window
+    }
+
     func returnToExternalApplication() {
-        guard NSApp.isActive, let app = lastExternalApplication, !app.isTerminated else { return }
+        guard NSApp.isActive else { return }
+        if returnToSettings {
+            // A closed settings window is never reopened, nor replaced by an old external target.
+            if let window = returnSettingsWindow, CaptureSettingsController.shared.captureWindow === window {
+                window.makeKeyAndOrderFront(nil)
+            }
+            return
+        }
+        guard let app = lastExternalApplication, !app.isTerminated else { return }
         _ = app.activate(options: [])
     }
 
@@ -223,6 +247,16 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
                        selected: @escaping @MainActor (CaptureSelection) -> Void,
                        cancelled: @escaping @MainActor () -> Void) {
         _ = hideSelection()
+        let settings = CaptureSettingsController.shared
+        if let window = settings.captureWindow {
+            selectionSettingsFrame = window.frame
+            let generation = settings.captureGeneration
+            selectionSettingsScope = try? SettingsCaptureScope(window: window, validate: { [weak settings, weak window] in
+                guard let settings, let window else { return false }
+                return settings.captureGeneration == generation && settings.captureWindow === window
+                    && !settings.blocksCapture
+            })
+        }
         let window = SelectionWindow(contentRect: display.frame, styleMask: .borderless,
                                      backing: .buffered, defer: false)
         window.setFrame(display.frame, display: false)
@@ -251,11 +285,22 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func hideSelection() -> Bool {
+        selectionSettingsFrame = nil
+        selectionSettingsScope = nil
         guard let window = selectionWindow else { return true }
         window.orderOut(nil)
         let hidden = !window.isVisible
         if hidden { selectionWindow = nil }
         return hidden
+    }
+
+    func settingsCaptureScope(for selection: CaptureSelection) throws -> SettingsCaptureScope? {
+        let current = CaptureSettingsController.shared.captureWindow?.frame
+        let overlapsOriginal = selectionSettingsFrame?.intersects(selection.rect) == true
+        let overlapsCurrent = current?.intersects(selection.rect) == true
+        guard overlapsOriginal || overlapsCurrent else { return nil }
+        guard let scope = selectionSettingsScope, scope.validate() else { throw ScreenshotError.settingsUnavailable }
+        return scope
     }
 
     func showPermission() {

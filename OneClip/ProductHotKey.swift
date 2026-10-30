@@ -1,5 +1,6 @@
 import Carbon
 import Combine
+import CoreGraphics
 import Foundation
 
 /// A physical key code and Carbon modifier flags, never text typed in another app.
@@ -156,8 +157,43 @@ struct HotKeyRegistration: Equatable, Hashable, Sendable {
 
 /// Copy the Carbon event's original time while EventRef is valid, before hopping to MainActor.
 struct ProductHotKeyPress: Sendable {
+    enum Kind: Sendable { case pressed, released }
     let identifier: UInt32
     let occurredAt: EventTime
+    var kind: Kind = .pressed
+    var isRepeat = false
+}
+
+/// Normalized before any actor hop: reordered delivery cannot make a native repeat fresh.
+struct ProductHotKeyInputState: Sendable {
+    private struct Edge: Sendable {
+        let occurredAt: EventTime
+        let isDown: Bool
+    }
+    private var identifiers: Set<UInt32> = []
+    private var edges: [UInt32: Edge] = [:]
+
+    mutating func register(_ identifier: UInt32, heldAt: EventTime? = nil) {
+        identifiers.insert(identifier)
+        if let heldAt, heldAt.isFinite, heldAt > 0 {
+            edges[identifier] = Edge(occurredAt: heldAt, isDown: true)
+        }
+    }
+    mutating func unregister(_ identifier: UInt32) {
+        identifiers.remove(identifier)
+        edges.removeValue(forKey: identifier)
+    }
+
+    mutating func consume(_ event: ProductHotKeyPress) -> ProductHotKeyPress? {
+        guard identifiers.contains(event.identifier), event.occurredAt.isFinite, event.occurredAt > 0 else { return nil }
+        let previous = edges[event.identifier]
+        if let previous, event.occurredAt <= previous.occurredAt { return nil }
+        let isDown = event.kind == .pressed
+        edges[event.identifier] = Edge(occurredAt: event.occurredAt, isDown: isDown)
+        var normalized = event
+        normalized.isRepeat = isDown && previous?.isDown == true
+        return normalized
+    }
 }
 
 struct HotKeyBackendFailure: Error, Equatable, Sendable {
@@ -170,6 +206,8 @@ struct HotKeyBackendFailure: Error, Equatable, Sendable {
 @MainActor
 protocol ProductHotKeyBackend: AnyObject {
     var onPressed: (@MainActor (ProductHotKeyPress) -> Void)? { get set }
+    /// A finite check of the proposed physical key, not an input monitor.
+    func isKeyDown(_ keyCode: UInt32) -> Bool
     func register(_ chord: HotKeyChord) -> Result<HotKeyRegistration, HotKeyBackendFailure>
     /// A failed removal must leave the registration owned by this backend.
     func unregister(_ registration: HotKeyRegistration) -> HotKeyBackendFailure?
@@ -197,7 +235,8 @@ final class ProductHotKeyController: ObservableObject {
     var deliveryAllowed: @MainActor () -> Bool = { false }
     var collectionDeliveryAllowed: @MainActor () -> Bool = { false }
     var reservedChords: @MainActor () -> [HotKeyChord] = { [] }
-    var settingsInteractionBlocked = false {
+    /// Only editing/diagnostics block delivery; merely viewing settings does not.
+    @Published var settingsInteractionBlocked = false {
         didSet {
             guard oldValue != settingsInteractionBlocked else { return }
             // A press generated in settings must not become a capture after its queued hop.
@@ -216,6 +255,12 @@ final class ProductHotKeyController: ObservableObject {
     private var restoring = false
     private let eventTimeNow: @MainActor () -> EventTime
     private var deliveryNotBefore: EventTime = 0
+    private struct KeyEdge {
+        let occurredAt: EventTime
+        let isDown: Bool
+    }
+    // Keep a down edge across presentation changes. A repeat is never a fresh capture request.
+    private var keyEdges: [UInt32: KeyEdge] = [:]
     private struct RecordingLease {
         let identifier: UUID
         let startedAt: EventTime
@@ -329,6 +374,12 @@ final class ProductHotKeyController: ObservableObject {
             if !hasPendingCleanup { publishCurrentStatus(for: role) }
             return !hasPendingCleanup
         }
+        // A local recorder may have selected a key that was not registered yet. Do not
+        // register that chord while it is held: its next repeat could look like a new hotkey.
+        guard !backend.isKeyDown(chord.keyCode) else {
+            setStatus("キーを離してから、もう一度登録してください。現在の設定は変えていません", for: role)
+            return false
+        }
         let newRegistration: HotKeyRegistration
         switch backend.register(chord) {
         case .success(let registration): newRegistration = registration
@@ -417,19 +468,30 @@ final class ProductHotKeyController: ObservableObject {
     }
 
     private func receive(_ press: ProductHotKeyPress) {
-        guard isStarted, !restoring, !transactionInProgress, !hasPendingCleanup else { return }
         let identifier = press.identifier
+        // Observe release even when delivery is blocked. Timestamps also reject out-of-order
+        // actor hops, so an old release cannot turn a still-held key into a fresh press.
+        let liveIDs = Set(registrations.values.map(\.identifier))
+        keyEdges = keyEdges.filter { liveIDs.contains($0.key) }
+        guard liveIDs.contains(identifier) else { return }
+        let now = eventTimeNow()
+        guard press.occurredAt.isFinite, now.isFinite, press.occurredAt > 0,
+              press.occurredAt <= now else { return }
+        let previous = keyEdges[identifier]
+        if let previous, press.occurredAt <= previous.occurredAt { return }
+        let isDown = press.kind == .pressed
+        keyEdges[identifier] = KeyEdge(occurredAt: press.occurredAt, isDown: isDown)
+        guard isDown, !press.isRepeat, previous?.isDown != true,
+              isStarted, !restoring, !transactionInProgress, !hasPendingCleanup else { return }
         if settingsInteractionBlocked {
             if let lease = recordingLease,
                let role = CaptureHotKeyRole.allCases.first(where: { registrations[$0]?.identifier == identifier }),
                let chord = activeChord(for: role) {
                 submitShortcutCandidate(chord, occurredAt: press.occurredAt, recording: lease.identifier)
             }
-            return // Settings presses never fall through to either product capture action.
+            return // Editing presses never fall through to either product capture action.
         }
-        let now = eventTimeNow()
-        guard press.occurredAt.isFinite, now.isFinite, press.occurredAt > deliveryNotBefore,
-              press.occurredAt <= now else { return }
+        guard press.occurredAt > deliveryNotBefore else { return }
         if registrations[.single]?.identifier == identifier, activeChord != nil, deliveryAllowed() {
             onPressed?()
         } else if registrations[.collection]?.identifier == identifier,
@@ -519,6 +581,11 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
     private var handlerRef: EventHandlerRef?
     private var handlerContext: UnsafeMutableRawPointer?
 
+    func isKeyDown(_ keyCode: UInt32) -> Bool {
+        guard let key = CGKeyCode(exactly: keyCode) else { return true }
+        return CGEventSource.keyState(.combinedSessionState, key: key)
+    }
+
     func register(_ chord: HotKeyChord) -> Result<HotKeyRegistration, HotKeyBackendFailure> {
         if let error = installHandler() { return .failure(error) }
         guard nextIdentifier != 0 else {
@@ -537,6 +604,9 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
             return .failure(HotKeyBackendFailure(operation: "registrationReferenceMissing", status: status))
         }
         registrations[identifier] = reference
+        // A key may go down during RegisterEventHotKey itself. Seed that edge before
+        // publishing the registration so its repeats cannot become capture requests.
+        callbackContext?.register(identifier, heldAt: isKeyDown(chord.keyCode) ? GetCurrentEventTime() : nil)
         return .success(HotKeyRegistration(identifier: identifier))
     }
 
@@ -545,6 +615,7 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
         let status = UnregisterEventHotKey(reference)
         guard status == noErr else { return HotKeyBackendFailure(operation: "unregister", status: status) }
         registrations.removeValue(forKey: registration.identifier)
+        callbackContext?.unregister(registration.identifier)
         return nil
     }
 
@@ -568,9 +639,12 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
             Task { @MainActor [weak self] in self?.onPressed?(press) }
         }
         let opaque = Unmanaged.passRetained(context).toOpaque()
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
         var reference: EventHandlerRef?
-        let status = InstallEventHandler(GetApplicationEventTarget(), Self.eventHandler, 1, &eventType, opaque, &reference)
+        let status = InstallEventHandler(GetApplicationEventTarget(), Self.eventHandler, 2, &eventTypes, opaque, &reference)
         guard status == noErr, let reference else {
             Unmanaged<ProductHotKeyCallbackContext>.fromOpaque(opaque).release()
             return HotKeyBackendFailure(operation: status == noErr ? "handlerReferenceMissing" : "installHandler", status: status)
@@ -578,6 +652,11 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
         handlerRef = reference
         handlerContext = opaque
         return nil
+    }
+
+    private var callbackContext: ProductHotKeyCallbackContext? {
+        guard let handlerContext else { return nil }
+        return Unmanaged<ProductHotKeyCallbackContext>.fromOpaque(handlerContext).takeUnretainedValue()
     }
 
     nonisolated private static let eventHandler: EventHandlerUPP = { _, event, context in
@@ -588,13 +667,42 @@ final class CarbonProductHotKeyBackend: ProductHotKeyBackend {
                                       MemoryLayout<EventHotKeyID>.size, nil, &identifier)
         guard status == noErr else { return status }
         guard identifier.signature == signature else { return OSStatus(eventNotHandledErr) }
-        let press = ProductHotKeyPress(identifier: identifier.id, occurredAt: GetEventTime(event))
+        let kind = GetEventKind(event)
+        guard kind == UInt32(kEventHotKeyPressed) || kind == UInt32(kEventHotKeyReleased) else {
+            return OSStatus(eventNotHandledErr)
+        }
+        let press = ProductHotKeyPress(identifier: identifier.id, occurredAt: GetEventTime(event),
+                                      kind: kind == UInt32(kEventHotKeyPressed) ? .pressed : .released)
         Unmanaged<ProductHotKeyCallbackContext>.fromOpaque(context).takeUnretainedValue().didReceive(press)
         return noErr
     }
 }
 
-private final class ProductHotKeyCallbackContext: Sendable {
-    let didReceive: @Sendable (ProductHotKeyPress) -> Void
-    init(didReceive: @escaping @Sendable (ProductHotKeyPress) -> Void) { self.didReceive = didReceive }
+private final class ProductHotKeyCallbackContext: @unchecked Sendable {
+    // Carbon callback and registration lifecycle serialize only this small input state.
+    // No framework object, callback or MainActor hop is invoked while holding the lock.
+    private let lock = NSLock()
+    private var inputState = ProductHotKeyInputState()
+    private let deliver: @Sendable (ProductHotKeyPress) -> Void
+
+    init(didReceive: @escaping @Sendable (ProductHotKeyPress) -> Void) { deliver = didReceive }
+
+    func register(_ identifier: UInt32, heldAt: EventTime?) {
+        lock.lock()
+        inputState.register(identifier, heldAt: heldAt)
+        lock.unlock()
+    }
+
+    func unregister(_ identifier: UInt32) {
+        lock.lock()
+        inputState.unregister(identifier)
+        lock.unlock()
+    }
+
+    func didReceive(_ event: ProductHotKeyPress) {
+        lock.lock()
+        let normalized = inputState.consume(event)
+        lock.unlock()
+        if let normalized { deliver(normalized) }
+    }
 }
