@@ -126,6 +126,8 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
 
 private struct CaptureSettingsView: View {
     @ObservedObject var keys: ProductHotKeyController
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var role: CaptureHotKeyRole = .single
     @State private var candidate: HotKeyChord?
     @State private var recording = false
@@ -135,17 +137,8 @@ private struct CaptureSettingsView: View {
     var body: some View {
         ScrollViewReader { scroll in
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "keyboard")
-                            .font(.system(size: 24)).foregroundStyle(Color.accentColor)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("撮影キー").font(.title2.bold())
-                            Text("未設定でも、OneClipメニューから使えます。")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
-                    }
+                VStack(alignment: .leading, spacing: 0) {
+                    header.padding(.bottom, 24)
                     if keys.hasPendingCleanup {
                         VStack(alignment: .leading, spacing: 10) {
                             Label("両方の撮影キーを停止しています", systemImage: "exclamationmark.triangle")
@@ -163,14 +156,20 @@ private struct CaptureSettingsView: View {
                                 }
                             }
                         }
-                        .padding(12).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.bottom, 16)
                     }
-                    ForEach(CaptureHotKeyRole.allCases) { keyRole in
-                        shortcutCard(for: keyRole)
+                    VStack(spacing: 16) {
+                        ForEach(CaptureHotKeyRole.allCases) { keyRole in
+                            shortcutCard(for: keyRole)
+                        }
                     }
+                    .padding(.bottom, 22)
                     Label(keys.hasPendingCleanup ? "メニューから撮影できます。" : "設定済みのキーは、設定を閉じると使えます。", systemImage: "info.circle")
                         .font(.callout).foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.bottom, 16)
                     DisclosureGroup("キーの使い方", isExpanded: $showsHelp) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("⌃ Control・⌥ Option・⌘ Commandのいずれかと、文字や数字などを組み合わせます。2つの撮影には別のキーを設定します。")
@@ -179,27 +178,67 @@ private struct CaptureSettingsView: View {
                         }
                         .font(.callout).foregroundStyle(.secondary).lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
-                    }.font(.callout)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 4)
                 }
-                .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                .padding(28).frame(maxWidth: .infinity, alignment: .leading)
             }
             .onChange(of: recording) { _, isRecording in
                 if isRecording { scroll.scrollTo(role, anchor: .top) }
             }
         }
-        .frame(width: 500, height: min(460, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
+        .frame(width: 540, height: min(510, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var header: some View {
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("撮影キー")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                Text("未設定でも、OneClipメニューから使えます。")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "keyboard")
+                .font(.system(size: 23, weight: .regular))
+                .foregroundStyle(.secondary)
+                .frame(width: 52, height: 52)
+                .background(Color.primary.opacity(0.04), in: Circle())
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func accent(for keyRole: CaptureHotKeyRole) -> Color {
+        if keyRole == .single {
+            return colorScheme == .dark
+                ? Color(red: 0.62, green: 0.68, blue: 1)
+                : Color(red: 0.32, green: 0.39, blue: 0.76)
+        }
+        return colorScheme == .dark
+            ? Color(red: 0.46, green: 0.80, blue: 0.74)
+            : Color(red: 0.13, green: 0.46, blue: 0.42)
     }
 
     private func shortcutCard(for keyRole: CaptureHotKeyRole) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 14) {
                 Image(systemName: keyRole == .single ? "viewfinder" : "square.stack")
-                    .font(.system(size: 21)).foregroundStyle(Color.accentColor)
-                    .frame(width: 40, height: 40)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+                    .font(.system(size: 21, weight: .medium))
+                    .foregroundStyle(accent(for: keyRole))
+                    .frame(width: 46, height: 46)
+                    .background {
+                        Circle().fill(
+                            LinearGradient(colors: [accent(for: keyRole).opacity(0.16),
+                                                    accent(for: keyRole).opacity(0.07)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                    }
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(keyRole.title).font(.headline)
+                    Text(keyRole.title).font(.system(size: 15, weight: .semibold))
                     Text(keyRole == .single ? "選んだ範囲をすぐコピー" : "必要な箇所を1枚にまとめる")
                         .font(.callout).foregroundStyle(.secondary)
                 }
@@ -207,14 +246,19 @@ private struct CaptureSettingsView: View {
                 Button(keys.desiredChord(for: keyRole) == nil ? "設定…" : "変更…") {
                     resetInput(for: keyRole)
                     recording = true
-                }.disabled(recording || keys.hasPendingCleanup)
+                }
+                .buttonStyle(.bordered).buttonBorderShape(.capsule)
+                .controlSize(.regular)
+                .accessibilityLabel("\(keyRole.title)のキーを\(keys.desiredChord(for: keyRole) == nil ? "設定" : "変更")")
+                .disabled(recording || keys.hasPendingCleanup)
             }
             HStack(alignment: .center, spacing: 12) {
                 if keys.hasPendingCleanup {
                     Label("停止中", systemImage: "pause.circle").foregroundStyle(.secondary)
                 } else if let chord = keys.activeChord(for: keyRole) {
                     ShortcutKeycaps(chord: chord)
-                    Text("設定済み").font(.caption).foregroundStyle(.secondary)
+                    Label("設定済み", systemImage: "checkmark")
+                        .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text(keys.desiredChord(for: keyRole) == nil ? "未設定" : "未登録")
                         .font(.callout).foregroundStyle(.secondary)
@@ -227,7 +271,11 @@ private struct CaptureSettingsView: View {
                         resetInput(for: keyRole)
                         let succeeded = keys.setChord(nil, for: keyRole)
                         report(succeeded ? "キーを解除しました。メニューから使えます。" : keys.statusText(for: keyRole))
-                    }.buttonStyle(.link).disabled(recording)
+                    }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .opacity(recording ? 0.45 : 1)
+                    .accessibilityLabel("\(keyRole.title)のキーを解除")
+                    .disabled(recording)
                 }
             }
             if let saved = keys.desiredChord(for: keyRole),
@@ -277,9 +325,16 @@ private struct CaptureSettingsView: View {
                 Text(detail).font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.primary.opacity(0.07)))
+        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.07 : 0.035), radius: 10, y: 3)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.035))
+        }
         .id(keyRole)
     }
 
@@ -299,12 +354,14 @@ private struct CaptureSettingsView: View {
 
 private struct ShortcutKeycaps: View {
     let chord: HotKeyChord
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: 5) { caps }.fixedSize()
+            HStack(spacing: 6) { caps }.fixedSize()
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     ForEach(Array(chord.keycapLabels.dropLast().enumerated()), id: \.offset) { _, label in
                         cap(label)
                     }
@@ -322,9 +379,16 @@ private struct ShortcutKeycaps: View {
 
     private func cap(_ label: String) -> some View {
         Text(label).font(.system(.body, design: .rounded).weight(.medium))
-            .padding(.horizontal, 8).frame(minWidth: 28, minHeight: 29)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.16)))
+            .padding(.horizontal, 10).frame(minWidth: 34, minHeight: 34)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.035))
+                    .shadow(color: .black.opacity(0.04), radius: 1, y: 1)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.5 : 0.08))
+            }
     }
 }
 
