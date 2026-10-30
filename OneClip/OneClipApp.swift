@@ -16,7 +16,9 @@ struct OneClipApp: App {
             #endif
             Text(capture.statusText)
             Divider()
-            Button("範囲をコピー") { OneClipModeActions.single() }
+            Button { OneClipModeActions.single() } label: {
+                Label("範囲をコピー", systemImage: "viewfinder")
+            }
                 .disabled(!capture.canBegin || capture.hasRetainedImage || collection.isWorking || collection.phase == .selecting || collection.phase == .permission || collection.phase == .onboarding)
             if capture.isWorking || capture.phase == .selecting {
                 Button("撮影を取り消す") { capture.cancel() }
@@ -25,7 +27,9 @@ struct OneClipApp: App {
             if capture.problem != nil {
                 Button(capture.hasRetainedImage ? "未コピーの画像を確認…" : "取得結果を確認…") { capture.showCurrentProblem() }
             }
-            Button(collection.isActive ? "収集に追加…" : "集めてコピー…") { OneClipModeActions.collection() }
+            Button { OneClipModeActions.collection() } label: {
+                Label(collection.isActive ? "収集に追加…" : "集めてコピー…", systemImage: "square.stack")
+            }
                 .disabled(capture.isWorking || capture.phase == .selecting || capture.phase == .permission || capture.phase == .onboarding || collection.isWorking || collection.phase == .selecting || collection.phase == .permission || collection.phase == .onboarding || NativeCaptureInterface.shared.captureEntryBlocked)
             if collection.isActive {
                 Text(collection.statusText)
@@ -34,7 +38,9 @@ struct OneClipApp: App {
             Divider()
             Text("まとめ撮りキー: \(keys.hasPendingCleanup ? "停止中・登録解除が必要" : keys.activeCollectionChord?.displayName ?? "未登録")")
             Text("撮影キー: \(keys.hasPendingCleanup ? "停止中・登録解除が必要" : keys.activeChord?.displayName ?? "未登録")")
-            Button("設定…") { CaptureSettingsController.shared.show() }
+            Button { CaptureSettingsController.shared.show() } label: {
+                Label("設定…", systemImage: "slider.horizontal.3")
+            }
                 .disabled(capture.isWorking || capture.phase == .selecting || capture.phase == .permission || capture.phase == .onboarding || NativeCaptureInterface.shared.hasDiscardConfirmation || collection.isWorking || collection.phase == .selecting || collection.phase == .onboarding || collection.phase == .permission || NativeCaptureInterface.shared.collectionPresentationBlocksEntry)
                 .keyboardShortcut(",")
             #if DEBUG

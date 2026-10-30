@@ -43,12 +43,15 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
     func show(coordinator: CollectionCaptureCoordinator, interface: NativeCaptureInterface, activate: Bool) {
         self.coordinator = coordinator; self.interface = interface
         if window == nil {
-            let window = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 430, height: 540),
+            let available = NSScreen.main?.visibleFrame.size ?? NSSize(width: 900, height: 700)
+            let initialSize = NSSize(width: min(520, available.width - 40),
+                                     height: min(640, available.height - 60))
+            let window = NSPanel(contentRect: NSRect(origin: .zero, size: initialSize),
                                  styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "OneClip — 集めてコピー"
             window.isRestorable = false; window.isReleasedWhenClosed = false
             window.hidesOnDeactivate = false
-            window.minSize = NSSize(width: 430, height: 480)
+            window.minSize = NSSize(width: min(460, initialSize.width), height: min(420, initialSize.height))
             window.contentView = nil
             window.delegate = self; window.center()
             self.window = window
@@ -120,24 +123,11 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
         interface?.collectionConfirmationPending = true
         let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 210), styleMask: [.titled], backing: .buffered, defer: false)
         sheet.isRestorable = false; sheet.isReleasedWhenClosed = false
-        sheet.contentView = NSHostingView(rootView:
-            VStack(alignment: .leading, spacing: 16) {
-                Text(title).font(.headline)
-                Text(message).fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button(keepTitle) { [weak self] in self?.answer(false, decision: decision) }.keyboardShortcut(.defaultAction)
-                    Button(deleteTitle) { [weak self] in self?.answer(true, decision: decision) }
-                        .onKeyPress(.return) { [weak self] in
-                            self?.answer(false, decision: decision)
-                            return .handled
-                        }
-                }
-            }.padding(24)
-                .onExitCommand { [weak self] in self?.answer(false, decision: decision) }
-                .onKeyPress(.return) { [weak self] in
-                    self?.answer(false, decision: decision)
-                    return .handled
-                })
+        sheet.contentView = NSHostingView(rootView: CollectionConfirmationView(
+            title: title, message: message, keepTitle: keepTitle, deleteTitle: deleteTitle,
+            onKeep: { [weak self] in self?.answer(false, decision: decision) },
+            onDelete: { [weak self] in self?.answer(true, decision: decision) }))
+        if let content = sheet.contentView { sheet.setContentSize(content.fittingSize) }
         self.sheet = sheet
         window.beginSheet(sheet) { [weak self] response in
             Task { @MainActor in
@@ -156,118 +146,100 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool { requestClose(); return false }
 }
 
-private struct CollectionPanelView: View {
+struct CollectionConfirmationView: View {
+    let title: String
+    let message: String
+    let keepTitle: String
+    let deleteTitle: String
+    let onKeep: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: title, systemName: "trash", tone: .warning)
+            Text(message).font(.callout).lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .oneClipCard(padding: 16)
+            HStack(spacing: 12) {
+                Button(keepTitle, action: onKeep)
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                Button(deleteTitle, action: onDelete)
+                    .onKeyPress(.return) { onKeep(); return .handled }
+            }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
+        }
+        .oneClipWindow().frame(width: 440)
+        .fixedSize(horizontal: false, vertical: true)
+        .onExitCommand(perform: onKeep)
+        .onKeyPress(.return) { onKeep(); return .handled }
+    }
+}
+
+private struct CollectionStatusHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+struct CollectionPanelView: View {
     @ObservedObject var coordinator: CollectionCaptureCoordinator
     let interface: NativeCaptureInterface
+    @Environment(\.colorScheme) private var colorScheme
     @State private var expanded = false
     @State private var actualPixels = false
+    @State private var statusHeight: CGFloat = 44
     @StateObject private var previewActions = CollectionPreviewActions()
     @FocusState private var focusedAction: String?
 
+    private var hasStatus: Bool {
+        coordinator.statusText != "\(coordinator.assets.count)/4枚・未コピー"
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("\(coordinator.assets.count)/4枚・未コピー").font(.headline)
-                Spacer()
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                OneClipHeading(title: "集めてコピー", subtitle: "\(coordinator.assets.count)/4枚・未コピー",
+                               systemName: "square.stack", tone: .collection)
+                Spacer(minLength: 0)
                 if expanded {
                     Button("パネルへ戻る") { collapse() }.focused($focusedAction, equals: "back")
                 }
             }
-            if coordinator.statusText != "\(coordinator.assets.count)/4枚・未コピー" {
-                Text(coordinator.statusText).font(.callout).fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.updatesFrequently)
-            }
-            if !expanded {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(coordinator.items) { item in
-                            let index = item.id
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text("素材\(index + 1)").font(.body.bold())
-                                    Text("\(item.width) × \(item.height) px・\(Double(item.width) / item.scale, specifier: "%g") × \(Double(item.height) / item.scale, specifier: "%g") pt・\(item.scale, specifier: "%g")倍")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("取り直し") { coordinator.replace(at: index) }
-                                    .focused($focusedAction, equals: "replace\(index)")
-                                    .accessibilityLabel("素材\(index + 1)を取り直す")
-                                Button("削除…") {
-                                    CollectionPanelController.shared.requestDelete(at: index) { deleted in
-                                        focusedAction = deleted ? "add" : "delete\(index)"
-                                    }
-                                }
-                                    .focused($focusedAction, equals: "delete\(index)")
-                                    .accessibilityLabel("素材\(index + 1)の削除を確認。元に戻せません")
-                            }.disabled(!coordinator.canEdit)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if expanded {
+                if hasStatus {
+                    ScrollView {
+                        statusNotice.background {
+                            GeometryReader { geometry in
+                                Color.clear.preference(key: CollectionStatusHeightKey.self,
+                                                       value: geometry.size.height)
+                            }
                         }
-                        if coordinator.assets.isEmpty { Text("素材はありません。「追加」で範囲を選べます。") }
                     }
-                }.frame(height: min(165, max(45, CGFloat(coordinator.assets.count) * 53)))
+                    .frame(height: min(88, max(1, statusHeight)))
+                    .onPreferenceChange(CollectionStatusHeightKey.self) { [height = $statusHeight] value in
+                        height.wrappedValue = value
+                    }
+                }
+                if let plan = coordinator.plan { previewCard(plan: plan) }
+            } else {
+                // Keep the actions visible even with four items or a long failure message.
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if hasStatus { statusNotice }
+                        if let plan = coordinator.plan { previewCard(plan: plan) }
+                        assetList
+                    }
+                    .padding(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                actionFooter
             }
-            if let plan = coordinator.plan {
-                HStack {
-                    Text("完成 \(plan.width) × \(plan.height) px").font(.caption)
-                    Spacer()
-                    if expanded {
-                        Picker("表示", selection: $actualPixels) {
-                            Text("全体").tag(false)
-                            Text("100%").tag(true)
-                        }.pickerStyle(.segmented).frame(width: 150)
-                        .focused($focusedAction, equals: "zoom")
-                    } else {
-                        Button("完成を大きく確認") {
-                            coordinator.preparePreview()
-                            expanded = true; actualPixels = false
-                            interface.collectionExpanded = true
-                            focusedAction = "back"
-                        }.focused($focusedAction, equals: "expand")
-                    }
-                }
-                CollectionPreview(coordinator: coordinator, plan: plan, actualPixels: expanded && actualPixels,
-                                  actions: previewActions)
-                    .frame(minHeight: expanded ? 280 : 140, maxHeight: .infinity)
-                    .focusable(expanded && actualPixels)
-                    .focused($focusedAction, equals: "preview")
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(focusedAction == "preview" ? Color.accentColor : .clear, lineWidth: 2)
-                            .allowsHitTesting(false)
-                    }
-                    .accessibilityLabel("撮影順の完成画像。\(plan.width)かける\(plan.height)ピクセル")
-                    .accessibilityHint("100%では矢印で移動、Homeで先頭、Tabで画像から移動できます")
-                    .onKeyPress(keys: CollectionPreviewNavigation.keys) { press in
-                        guard let command = CollectionPreviewNavigation.command(
-                            for: press.key, modifiers: press.modifiers, expanded: expanded,
-                            actualPixels: actualPixels, focused: focusedAction == "preview",
-                            confirmationPending: interface.collectionConfirmationPending) else { return .ignored }
-                        return previewActions.pan(command) ? .handled : .ignored
-                    }
-                if expanded { Text(actualPixels ? "100%：画像1pxを画面1pxで表示。Tabで画像へ、矢印で移動、Homeで先頭" : "全体：表示だけを縮小。コピーする画素数は変わりません").font(.caption) }
-            }
-            if !expanded {
-                if coordinator.assets.count == 4 {
-                    Text("4枚までです。追加するには素材を削除するか、取り直してください。")
-                        .font(.caption).fixedSize(horizontal: false, vertical: true)
-                }
-                HStack {
-                    Button("追加…") { coordinator.beginOrAdd() }.disabled(!coordinator.canAdd)
-                        .focused($focusedAction, equals: "add")
-                    Button("コピー") { coordinator.copy() }.disabled(!coordinator.canCopy)
-                        .focused($focusedAction, equals: "copy")
-                    Spacer()
-                    Button("全体を破棄…") { CollectionPanelController.shared.requestClose() }
-                        .disabled(coordinator.phase == .writing)
-                        .focused($focusedAction, equals: "discard")
-                }
-                if coordinator.isWorking {
-                    Button("処理を取り消す・素材は残す") { coordinator.cancelOperation() }
-                        .disabled(coordinator.phase == .writing).focused($focusedAction, equals: "cancel")
-                }
-                Text("収集中はクリップボードを変更しません。コピー後は素材を解放します。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }.padding(16).frame(minWidth: 400, minHeight: 450)
+        }
+        .buttonStyle(.bordered).buttonBorderShape(.capsule)
+        .oneClipWindow(padding: 24).frame(minWidth: 440, minHeight: 320)
         .focusable()
         .focused($focusedAction, equals: "panel")
         .onAppear { focusedAction = "panel" }
@@ -280,6 +252,143 @@ private struct CollectionPanelView: View {
         }
         .onDisappear { interface.collectionExpanded = false }
     }
+
+    private var statusNotice: some View {
+        Label(coordinator.statusText, systemImage: "info.circle")
+            .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            .accessibilityAddTraits(.updatesFrequently)
+            .oneClipCard(padding: 14)
+    }
+
+    private var assetList: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(coordinator.items) { item in
+                let index = item.id
+                HStack(spacing: 12) {
+                    Text("\(index + 1)")
+                        .font(.system(.callout, design: .rounded).weight(.semibold))
+                        .foregroundStyle(OneClipTone.collection.color(for: colorScheme))
+                        .frame(width: 28, height: 28)
+                        .background(OneClipTone.collection.color(for: colorScheme).opacity(0.10), in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("素材\(index + 1)").font(.body.weight(.semibold))
+                        Text("\(item.width) × \(item.height) px")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("\(Double(item.width) / item.scale, specifier: "%g") × \(Double(item.height) / item.scale, specifier: "%g") pt・\(item.scale, specifier: "%g")倍")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("取り直し") { coordinator.replace(at: index) }
+                        .focused($focusedAction, equals: "replace\(index)")
+                        .accessibilityLabel("素材\(index + 1)を取り直す")
+                    Button("削除…") {
+                        CollectionPanelController.shared.requestDelete(at: index) { deleted in
+                            focusedAction = deleted ? "add" : "delete\(index)"
+                        }
+                    }
+                    .focused($focusedAction, equals: "delete\(index)")
+                    .accessibilityLabel("素材\(index + 1)の削除を確認。元に戻せません")
+                }
+                .disabled(!coordinator.canEdit)
+                if index < coordinator.assets.count - 1 { Divider() }
+            }
+            if coordinator.assets.isEmpty {
+                HStack(spacing: 14) {
+                    OneClipBadge(systemName: "plus.viewfinder", tone: .collection, size: 40)
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("最初の素材を追加").font(.headline)
+                        Text("「追加」で、まとめたい範囲を選べます。")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .oneClipCard(padding: 16)
+    }
+
+    private func previewCard(plan: M0CompositionPlan) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("完成プレビュー").font(.callout.weight(.semibold))
+                    Text("\(plan.width) × \(plan.height) px").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if expanded {
+                    Picker("表示", selection: $actualPixels) {
+                        Text("全体").tag(false)
+                        Text("100%").tag(true)
+                    }.pickerStyle(.segmented).frame(width: 150)
+                    .focused($focusedAction, equals: "zoom")
+                } else {
+                    Button("完成を大きく確認") {
+                        coordinator.preparePreview()
+                        expanded = true; actualPixels = false
+                        interface.collectionExpanded = true
+                        focusedAction = "back"
+                    }.focused($focusedAction, equals: "expand")
+                }
+            }
+            CollectionPreview(coordinator: coordinator, plan: plan, actualPixels: expanded && actualPixels,
+                              actions: previewActions)
+                .frame(minHeight: expanded ? 72 : 180, maxHeight: expanded ? .infinity : 180)
+                .focusable(expanded && actualPixels)
+                .focused($focusedAction, equals: "preview")
+                .overlay {
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(focusedAction == "preview" ? Color.accentColor : .clear, lineWidth: 2)
+                        .allowsHitTesting(false)
+                }
+                .accessibilityLabel("撮影順の完成画像。\(plan.width)かける\(plan.height)ピクセル")
+                .accessibilityHint("100%では矢印で移動、Homeで先頭、Tabで画像から移動できます")
+                .onKeyPress(keys: CollectionPreviewNavigation.keys) { press in
+                    guard let command = CollectionPreviewNavigation.command(
+                        for: press.key, modifiers: press.modifiers, expanded: expanded,
+                        actualPixels: actualPixels, focused: focusedAction == "preview",
+                        confirmationPending: interface.collectionConfirmationPending) else { return .ignored }
+                    return previewActions.pan(command) ? .handled : .ignored
+                }
+            if expanded {
+                Text(actualPixels ? "100%：画像1pxを画面1pxで表示。Tabで画像へ、矢印で移動、Homeで先頭" : "全体：表示だけを縮小。コピーする画素数は変わりません")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        // Keep every source pixel visible; only the surrounding surface has rounded corners.
+        .oneClipCard(padding: 14)
+    }
+
+    private var actionFooter: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if coordinator.assets.count == 4 {
+                Text("4枚までです。追加するには素材を削除するか、取り直してください。")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 12) {
+                Button("追加…") { coordinator.beginOrAdd() }.disabled(!coordinator.canAdd)
+                    .focused($focusedAction, equals: "add")
+                Button("コピー") { coordinator.copy() }.disabled(!coordinator.canCopy)
+                    .buttonStyle(.borderedProminent)
+                    .focused($focusedAction, equals: "copy")
+                Spacer(minLength: 0)
+                Button("全体を破棄…") { CollectionPanelController.shared.requestClose() }
+                    .disabled(coordinator.phase == .writing)
+                    .focused($focusedAction, equals: "discard")
+            }
+            .controlSize(.large)
+            if coordinator.isWorking {
+                Button("処理を取り消す・素材は残す") { coordinator.cancelOperation() }
+                    .disabled(coordinator.phase == .writing).focused($focusedAction, equals: "cancel")
+            }
+            Text("収集中はクリップボードを変更しません。コピー後は素材を解放します。")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func collapse() {
         expanded = false; actualPixels = false
         interface.collectionExpanded = false
@@ -290,29 +399,39 @@ private struct CollectionPanelView: View {
 struct CollectionPermissionView: View {
     @ObservedObject var coordinator: CollectionCaptureCoordinator
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text("集めてコピーの画面収録").font(.headline)
-            Text(coordinator.permissionMessage).fixedSize(horizontal: false, vertical: true)
-            Button("macOSに許可を要求") { coordinator.requestPermission() }
-            #if DEBUG
-            if M3FailureLab.isEnabled {
-                Text("安全な試験：許可要求と再試行は模擬です。macOSの設定は変更しません。")
-            } else { systemSettingsButton }
-            #else
-            systemSettingsButton
-            #endif
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: "画面収録の許可", subtitle: "集めてコピー",
+                           systemName: "rectangle.inset.filled.and.person.filled", tone: .collection)
+            Text(coordinator.permissionMessage).font(.callout).lineSpacing(4)
+                .fixedSize(horizontal: false, vertical: true)
+                .oneClipCard(padding: 16)
+            VStack(alignment: .leading, spacing: 12) {
+                Button("macOSに許可を要求") { coordinator.requestPermission() }
+                #if DEBUG
+                if M3FailureLab.isEnabled {
+                    Text("安全な試験：許可要求と再試行は模擬です。macOSの設定は変更しません。")
+                        .font(.callout).foregroundStyle(.secondary)
+                } else { systemSettingsButton }
+                #else
+                systemSettingsButton
+                #endif
+            }
             HStack {
                 Button("もう一度試す") { coordinator.retryPermission() }
+                Spacer()
                 Button("取消") { coordinator.cancelOperation() }.keyboardShortcut(.cancelAction)
             }
-        }.padding(24).frame(width: 420)
+        }
+        .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
+        .oneClipWindow().frame(width: 460)
+        .fixedSize(horizontal: false, vertical: true)
     }
     private var systemSettingsButton: some View {
-            Button("システム設定を開く") {
-                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
-                    NSWorkspace.shared.open(url)
-                }
+        Button("システム設定を開く") {
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                NSWorkspace.shared.open(url)
             }
+        }
     }
 }
 

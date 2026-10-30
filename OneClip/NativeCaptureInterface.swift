@@ -146,19 +146,10 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         }
         captureGuideWindow?.title = "OneClip — 集めてコピー"
         captureGuideWindow?.contentView = NSHostingView(rootView:
-            VStack(alignment: .leading, spacing: 18) {
-                Text("必要なところを集めて、ひと貼り").font(.title3.bold())
-                Text("範囲を選ぶと素材が追加されます。別のアプリを操作しながら、最大4枚まで集められます。")
-                Text("収集中はクリップボードを変更しません。順序と完成画像を確認し、最後に「コピー」を押してください。")
-                Text("追加や取り直しのEscは旧素材を残します。パネルを閉じる時は全体破棄を確認します。スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。")
-                HStack {
-                    Button("最初の範囲を選ぶ") { [weak self] in
-                        self?.expandedSelectionHelp = true
-                        started()
-                    }.keyboardShortcut(.defaultAction)
-                    Button("取消") { cancelled() }.keyboardShortcut(.cancelAction)
-                }
-            }.fixedSize(horizontal: false, vertical: true).padding(24).frame(width: 480))
+            CaptureGuideView(collection: true, started: { [weak self] in
+                self?.expandedSelectionHelp = true
+                started()
+            }, cancelled: cancelled))
         show(captureGuideWindow)
     }
     func showCollectionPermission() {
@@ -222,22 +213,10 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         }
         captureGuideWindow?.title = "OneClip — はじめての範囲コピー"
         captureGuideWindow?.contentView = NSHostingView(rootView:
-            VStack(alignment: .leading, spacing: 18) {
-                Text("必要なところを選んで、コピー").font(.title3.bold())
-                Text("1つの画面内でドラッグし、離すとその範囲をコピーします。確認画面や保存先の選択はありません。")
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("キーボードでは、矢印で範囲を作り、矢印で移動、Shift + 矢印で大きさを変更します。Enterで確定、Escapeで取り消せます。")
-                    .font(.callout).fixedSize(horizontal: false, vertical: true)
-                Text("範囲を確定すると今のクリップボードを置き換えます。撮影に必要な場合だけ画面収録の許可を案内します。")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Button("範囲選択を始める") { [weak self] in
-                        self?.expandedSelectionHelp = true
-                        started()
-                    }.keyboardShortcut(.defaultAction)
-                    Button("取消") { cancelled() }.keyboardShortcut(.cancelAction)
-                }
-            }.padding(24).frame(width: 480, alignment: .leading))
+            CaptureGuideView(collection: false, started: { [weak self] in
+                self?.expandedSelectionHelp = true
+                started()
+            }, cancelled: cancelled))
         show(captureGuideWindow)
     }
 
@@ -365,13 +344,13 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             feedbackWindow = panel
         }
-        feedbackWindow?.contentView = NSHostingView(rootView:
-            Text(message).font(.body.weight(.medium)).padding(16)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12)))
-        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main {
+        feedbackWindow?.contentView = NSHostingView(rootView: CaptureFeedbackView(message: message))
+        if let content = feedbackWindow?.contentView { feedbackWindow?.setContentSize(content.fittingSize) }
+        if let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) }) ?? NSScreen.main,
+           let window = feedbackWindow {
             let frame = screen.visibleFrame
-            feedbackWindow?.setFrameOrigin(NSPoint(x: frame.midX - 210, y: frame.maxY - 90))
+            window.setFrameOrigin(NSPoint(x: frame.midX - window.frame.width / 2,
+                                          y: frame.maxY - window.frame.height - 32))
         }
         feedbackWindow?.orderFrontRegardless()
         NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
@@ -412,14 +391,9 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         sheet.isRestorable = false
         sheet.isReleasedWhenClosed = false
         sheet.contentView = NSHostingView(rootView:
-            VStack(alignment: .leading, spacing: 18) {
-                Text("未コピーの画像を破棄しますか？").font(.headline)
-                Text("破棄すると、この画像は再コピーできません。")
-                HStack {
-                    Button("画像を残す") { [weak self] in self?.answerDiscard(false) }.keyboardShortcut(.defaultAction)
-                    Button("破棄する") { [weak self] in self?.answerDiscard(true) }
-                }
-            }.padding(24).onExitCommand { [weak self] in self?.answerDiscard(false) })
+            CaptureDiscardConfirmationView(kept: { [weak self] in self?.answerDiscard(false) },
+                                           discarded: { [weak self] in self?.answerDiscard(true) }))
+        resizeToFit(sheet)
         discardWindow = sheet
         window.beginSheet(sheet) { [weak self] response in
             Task { @MainActor in
@@ -677,23 +651,58 @@ private final class RegionSelectionView: NSView {
             let width = Int((rect.width * display.scale).rounded())
             let height = Int((rect.height * display.scale).rounded())
             drawLabel("\(width) × \(height) px", at: NSPoint(x: min(max(rect.minX, 12), bounds.width - 200),
-                                                                 y: max(12, rect.minY - 32)))
+                                                                 y: rect.minY - 8), topAligned: true, avoiding: rect)
         }
-        drawLabel("\(selectionTitle)・\(hint)", at: NSPoint(x: 24, y: bounds.height - 58))
+        let instruction = drawLabel("\(selectionTitle)・\(hint)",
+                                    at: NSPoint(x: 24, y: bounds.height - 24), topAligned: true)
         if expandedHelp && selection == nil && dragStart == nil {
-            drawLabel("キーボード: 矢印で範囲を作成 → 移動/大きさ調整 → Enterで\(actionLabel)", at: NSPoint(x: 24, y: bounds.height - 96))
+            drawLabel("キーボード: 矢印で範囲を作成 → 移動/大きさ調整 → Enterで\(actionLabel)",
+                      at: NSPoint(x: 24, y: instruction.minY - 10), topAligned: true)
         }
     }
 
-    private func drawLabel(_ text: String, at point: NSPoint) {
-        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14, weight: .medium),
-                                                       .foregroundColor: NSColor.white]
-        let text = NSAttributedString(string: text, attributes: attributes)
-        let size = text.size()
-        let rect = NSRect(origin: point, size: NSSize(width: min(size.width + 20, bounds.width - point.x - 12), height: size.height + 12))
-        NSColor.black.withAlphaComponent(0.85).setFill()
-        NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
-        text.draw(at: NSPoint(x: rect.minX + 10, y: rect.minY + 6))
+    @discardableResult
+    private func drawLabel(_ value: String, at point: NSPoint, topAligned: Bool = false,
+                           avoiding selection: NSRect? = nil) -> NSRect {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byWordWrapping
+        paragraph.lineSpacing = 3
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .medium),
+            .foregroundColor: NSColor.white,
+            .paragraphStyle: paragraph
+        ]
+        let text = NSAttributedString(string: value, attributes: attributes)
+        var x = min(max(12, point.x), max(12, bounds.width - 40))
+        let availableWidth = max(1, bounds.width - x - 12)
+        let textWidth = max(1, availableWidth - 28)
+        let measured = text.boundingRect(with: NSSize(width: textWidth, height: .greatestFiniteMagnitude),
+                                         options: [.usesLineFragmentOrigin, .usesFontLeading])
+        let width = min(availableWidth, ceil(measured.width) + 28)
+        let height = ceil(measured.height) + 20
+        var desiredY = topAligned ? point.y - height : point.y
+        if let selection, desiredY < 12 {
+            // Keep dimensions outside the selection when there is room on another side.
+            if selection.maxY + 8 + height <= bounds.height - 12 {
+                desiredY = selection.maxY + 8
+            } else if selection.maxX + 8 + width <= bounds.width - 12 {
+                x = selection.maxX + 8
+                desiredY = selection.minY
+            } else if selection.minX - 8 - width >= 12 {
+                x = selection.minX - 8 - width
+                desiredY = selection.minY
+            }
+        }
+        let y = max(12, min(desiredY, bounds.height - height - 12))
+        let rect = NSRect(x: x, y: y, width: width, height: height)
+        let bubble = NSBezierPath(roundedRect: rect, xRadius: 14, yRadius: 14)
+        NSColor(calibratedRed: 0.13, green: 0.15, blue: 0.20, alpha: 0.96).setFill()
+        bubble.fill()
+        NSColor.white.withAlphaComponent(NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast ? 0.6 : 0.16).setStroke()
+        bubble.lineWidth = 1
+        bubble.stroke()
+        text.draw(with: rect.insetBy(dx: 14, dy: 10), options: [.usesLineFragmentOrigin, .usesFontLeading])
+        return rect
     }
 
     private func globalPoint(_ event: NSEvent) -> CGPoint {
@@ -702,7 +711,117 @@ private final class RegionSelectionView: NSView {
     }
 }
 
-private struct CapturePermissionView: View {
+/// Presentation-only content shared by the single and collection introductions.
+struct CaptureGuideView: View {
+    let collection: Bool
+    let started: () -> Void
+    let cancelled: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var tone: OneClipTone { collection ? .collection : .single }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: collection ? "必要なところを集めて、ひと貼り" : "必要なところを選んで、コピー",
+                           systemName: collection ? "square.stack" : "viewfinder", tone: tone)
+            VStack(alignment: .leading, spacing: 18) {
+                guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
+                          message: collection
+                            ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
+                            : "1つの画面内でドラッグし、離すとコピーします。確認画面や保存先の選択はありません。")
+                Divider()
+                guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "順序と完成画像を確認してコピー" : "キーボードでも選べます",
+                          message: collection
+                            ? "収集中はクリップボードを変更しません。最後に「コピー」を押してください。"
+                            : "矢印で範囲を作成・移動し、Shift + 矢印で大きさを変えます。Enterで確定、Escapeで取り消せます。")
+            }
+            .oneClipCard()
+            if collection {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("追加や取り直しのEscは旧素材を残します。パネルを閉じる時は全体破棄を確認します。", systemImage: "arrow.uturn.backward")
+                        .foregroundStyle(.secondary)
+                    Label("スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。", systemImage: "exclamationmark.circle")
+                }
+                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("確定すると、今のクリップボードを置き換えます。", systemImage: "doc.on.clipboard")
+                    Text("撮影に必要な場合だけ画面収録の許可を案内します。")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Button("取消", action: cancelled).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(collection ? "最初の範囲を選ぶ" : "範囲選択を始める", action: started)
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .buttonBorderShape(.capsule).controlSize(.large).tint(tone.color(for: colorScheme))
+        }
+        .oneClipWindow().frame(width: 500, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func guideStep(symbol: String, title: String, message: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: symbol).font(.system(size: 18, weight: .medium))
+                .foregroundStyle(tone.color(for: colorScheme)).frame(width: 24, height: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title).font(.headline)
+                Text(message).font(.callout).foregroundStyle(.secondary)
+                    .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+struct CaptureFeedbackView: View {
+    let message: String
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        HStack(spacing: 12) {
+            OneClipBadge(systemName: "info", tone: .neutral, size: 30)
+            Text(message).font(.body.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 16).padding(.vertical, 12)
+        .frame(minHeight: 58).frame(width: 420)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.08))
+        }
+    }
+}
+
+struct CaptureDiscardConfirmationView: View {
+    let kept: () -> Void
+    let discarded: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: "未コピーの画像を破棄しますか？", systemName: "trash", tone: .warning)
+            Text("破棄すると、この画像は再コピーできません。")
+                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("画像を残す", action: kept).keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                Spacer()
+                Button("破棄する", action: discarded)
+            }
+            .buttonBorderShape(.capsule).controlSize(.large)
+        }
+        .oneClipWindow().frame(width: 440, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .onExitCommand(perform: kept)
+    }
+}
+
+struct CapturePermissionView: View {
     @ObservedObject var coordinator: SingleCaptureCoordinator
     let contentSizeChanged: () -> Void
     @State private var showsHelp: Bool
@@ -719,14 +838,15 @@ private struct CapturePermissionView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("画面収録の許可").font(.title3.bold())
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: "画面収録の許可", systemName: "rectangle.on.rectangle", tone: .single)
+            VStack(alignment: .leading, spacing: 12) {
                 Text(coordinator.permissionMessage)
                     .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
-                Text("画像の保存・送信は行いません。")
+                Label("画像の保存・送信は行いません。", systemImage: "lock")
                     .font(.callout).foregroundStyle(.secondary)
             }
+            .oneClipCard()
             DisclosureGroup("許可済み・許可できない場合", isExpanded: $showsHelp) {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("システム設定 → プライバシーとセキュリティ → 画面収録で、OneClipをオンにします。")
@@ -758,9 +878,9 @@ private struct CapturePermissionView: View {
                     Button("許可を求める") { coordinator.requestPermission() }.buttonStyle(.borderedProminent)
                 }
             }
-            .controlSize(.large)
+            .controlSize(.large).buttonBorderShape(.capsule)
         }
-        .padding(24).frame(width: 420, alignment: .leading)
+        .oneClipWindow().frame(width: 460, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: showsHelp) { _, _ in contentSizeChanged() }
         .onChange(of: coordinator.permissionMessage) { _, _ in contentSizeChanged() }
@@ -776,31 +896,44 @@ private struct CapturePermissionView: View {
     }
 }
 
-private struct CaptureProblemView: View {
+struct CaptureProblemView: View {
     @ObservedObject var coordinator: SingleCaptureCoordinator
     let interface: NativeCaptureInterface
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(coordinator.problem?.title ?? "処理を完了できませんでした").font(.title3.bold())
-            Text(coordinator.problem?.message ?? "").fixedSize(horizontal: false, vertical: true)
-            if coordinator.hasRetainedImage {
-                Text("取得した画像をメモリに保持しています。「再コピー」は同じ画像を使い、撮り直しません。")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: coordinator.problem?.title ?? "処理を完了できませんでした",
+                           systemName: "exclamationmark", tone: .warning)
+            VStack(alignment: .leading, spacing: 14) {
+                Text(coordinator.problem?.message ?? "")
+                    .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                if coordinator.hasRetainedImage {
+                    Label("取得した画像をメモリに保持しています。「再コピー」は同じ画像を使い、撮り直しません。", systemImage: "photo")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                }
+                if coordinator.problem?.clipboardMayHaveChanged == true {
+                    Label("書込み準備後に失敗したため、以前のクリップボード内容は残っていない場合があります。", systemImage: "exclamationmark.circle")
+                        .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+                }
             }
-            if coordinator.problem?.clipboardMayHaveChanged == true {
-                Text("書込み準備後に失敗したため、以前のクリップボード内容は残っていない場合があります。")
-                    .font(.callout)
-            }
+            .oneClipCard()
             HStack {
                 if coordinator.hasRetainedImage {
-                    Button("再コピー") { coordinator.retryCopy() }.disabled(coordinator.isWorking)
+                    Button("再コピー") { coordinator.retryCopy() }
+                        .buttonStyle(.borderedProminent).disabled(coordinator.isWorking)
+                    Spacer()
                     Button("破棄…") { interface.closeProblem() }.disabled(coordinator.isWorking)
                 } else {
-                    Button("もう一度選択") { coordinator.retrySelection() }.disabled(coordinator.isWorking)
+                    Button("もう一度選択") { coordinator.retrySelection() }
+                        .buttonStyle(.borderedProminent).disabled(coordinator.isWorking)
+                    Spacer()
                     Button("閉じる") { coordinator.cancel() }
                 }
             }
-        }.padding(24).frame(width: 470, alignment: .leading)
+            .buttonBorderShape(.capsule).controlSize(.large)
+        }
+        .oneClipWindow().frame(width: 480, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
             .onExitCommand { interface.closeProblem() }
     }
 }
