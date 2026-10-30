@@ -14,12 +14,96 @@ enum ScreenshotError: String, Error, Sendable {
     case displayChanged
     case invalidSelection
     case practiceUnavailable
+    case settingsUnavailable
     case selfApplicationMissing
     case shareableContentUnavailable
     case captureFailed
     case unexpectedImageSize
     case unexpectedImageFormat
     case imageLimitExceeded
+}
+
+/// Immutable SCK metadata used to admit exactly one explicitly scoped settings window.
+/// Titles and other application contents are deliberately not part of the match.
+struct SettingsCaptureWindowMetadata {
+    let windowID: CGWindowID
+    let processID: Int32?
+    let frame: CGRect
+    let isOnScreen: Bool
+}
+
+struct SettingsCaptureWindowIdentity {
+    let windowID: CGWindowID
+    let processID: Int32
+    let quartzFrame: CGRect
+
+    func matchingIndex(in windows: [SettingsCaptureWindowMetadata]) throws -> Int {
+        guard windowID > 0, processID > 0,
+              quartzFrame.width > 0, quartzFrame.height > 0,
+              [quartzFrame.minX, quartzFrame.minY, quartzFrame.width, quartzFrame.height].allSatisfy(\.isFinite) else {
+            throw ScreenshotError.settingsUnavailable
+        }
+        let matches = windows.indices.filter {
+            windows[$0].windowID == windowID
+        }
+        guard matches.count == 1, let index = matches.first,
+              windows[index].processID == processID, windows[index].isOnScreen else {
+            throw ScreenshotError.settingsUnavailable
+        }
+        let actual = windows[index].frame
+        let differences = [actual.minX - quartzFrame.minX, actual.minY - quartzFrame.minY,
+                           actual.width - quartzFrame.width, actual.height - quartzFrame.height]
+        guard differences.allSatisfy({ $0.isFinite && abs($0) <= 0.000_001 }) else {
+            throw ScreenshotError.settingsUnavailable
+        }
+        return index
+    }
+}
+
+/// A capability for the actual settings NSWindow supplied by its owner for one selection.
+/// Retaining the object does not authorize a closed/replaced window or another window with its ID.
+@MainActor
+struct SettingsCaptureScope {
+    private let window: NSWindow
+    let windowID: CGWindowID
+    let frame: CGRect
+    private let screen: CaptureDisplaySnapshot
+    private let ownerStillValid: @MainActor () -> Bool
+    private let identity: SettingsCaptureWindowIdentity
+
+    init(window: NSWindow, validate: @escaping @MainActor () -> Bool) throws {
+        guard window.windowNumber > 0, window.windowNumber <= Int(UInt32.max),
+              let screen = window.screen else { throw ScreenshotError.settingsUnavailable }
+        self.window = window
+        self.windowID = CGWindowID(window.windowNumber)
+        self.frame = window.frame
+        self.screen = try ScreenshotService.snapshot(for: screen)
+        self.ownerStillValid = validate
+        self.identity = SettingsCaptureWindowIdentity(windowID: self.windowID,
+            processID: ProcessInfo.processInfo.processIdentifier,
+            quartzFrame: try ScreenshotService.quartzFrame(for: window.frame))
+        guard self.validate() else { throw ScreenshotError.settingsUnavailable }
+    }
+
+    func validate() -> Bool {
+        guard ownerStillValid(), window.isVisible, !window.isMiniaturized, window.isOnActiveSpace,
+              window.windowNumber == Int(windowID), window.frame == frame,
+              window.attachedSheet == nil, window.childWindows?.isEmpty ?? true,
+              NSApp.windows.contains(where: { $0 === window }),
+              ScreenshotService.currentDisplayMatches(screen),
+              let currentScreen = window.screen,
+              let current = try? ScreenshotService.snapshot(for: currentScreen) else { return false }
+        return current.id == screen.id && current.frame == screen.frame && current.scale == screen.scale
+    }
+
+    fileprivate func matchingWindow(in windows: [SCWindow]) throws -> SCWindow {
+        guard validate() else { throw ScreenshotError.settingsUnavailable }
+        let metadata = windows.map {
+            SettingsCaptureWindowMetadata(windowID: $0.windowID, processID: $0.owningApplication?.processID,
+                                          frame: $0.frame, isOnScreen: $0.isOnScreen)
+        }
+        return windows[try identity.matchingIndex(in: metadata)]
+    }
 }
 
 #if DEBUG
@@ -76,21 +160,26 @@ struct SingleCaptureRequest {
     let selection: CaptureSelection
     let operationID: UUID
     let budget: CaptureImageBudgetContext
+    let settings: SettingsCaptureScope?
     #if DEBUG
     let practice: PracticeCaptureScope?
 
     init(selection: CaptureSelection, operationID: UUID, budget: CaptureImageBudgetContext = .init(),
+         settings: SettingsCaptureScope? = nil,
          practice: PracticeCaptureScope? = nil) {
         self.selection = selection
         self.operationID = operationID
         self.budget = budget
+        self.settings = settings
         self.practice = practice
     }
     #else
-    init(selection: CaptureSelection, operationID: UUID, budget: CaptureImageBudgetContext = .init()) {
+    init(selection: CaptureSelection, operationID: UUID, budget: CaptureImageBudgetContext = .init(),
+         settings: SettingsCaptureScope? = nil) {
         self.selection = selection
         self.operationID = operationID
         self.budget = budget
+        self.settings = settings
     }
     #endif
 }
@@ -172,9 +261,14 @@ final class ScreenshotService: ScreenshotCapturing {
             throw ScreenshotError.selfApplicationMissing
         }
 
-        let exceptions: [SCWindow]
+        var exceptions: [SCWindow] = []
+        if let scope = request.settings {
+            exceptions = [try scope.matchingWindow(in: content.windows)]
+        }
         #if DEBUG
         if let scope = request.practice {
+            // Synthetic practice and settings scopes cannot broaden one another's allowance.
+            guard request.settings == nil else { throw ScreenshotError.settingsUnavailable }
             let matches = content.windows.filter {
                 $0.windowID == scope.windowID &&
                 $0.owningApplication?.processID == ProcessInfo.processInfo.processIdentifier
@@ -184,11 +278,7 @@ final class ScreenshotService: ScreenshotCapturing {
                 throw ScreenshotError.practiceUnavailable
             }
             exceptions = [window]
-        } else {
-            exceptions = []
         }
-        #else
-        exceptions = []
         #endif
         // Failures never switch to an empty excluded-app list or a different display/window.
         let filter = SCContentFilter(display: display, excludingApplications: [ownApplication],
@@ -212,6 +302,9 @@ final class ScreenshotService: ScreenshotCapturing {
         configuration.ignoreShadowsDisplay = true
         configuration.ignoreShadowsSingleWindow = true
         configuration.captureResolution = .best
+        if request.settings != nil {
+            if #available(macOS 14.2, *) { configuration.includeChildWindows = false }
+        }
         #if DEBUG
         if request.practice != nil {
             if #available(macOS 14.2, *) { configuration.includeChildWindows = false }
@@ -261,6 +354,11 @@ final class ScreenshotService: ScreenshotCapturing {
         guard NSApp.isProtectedDataAvailable else { throw ScreenshotError.protectedDataUnavailable }
         guard CGPreflightScreenCaptureAccess() else { throw ScreenshotError.permissionRequired }
         guard Self.currentDisplayMatches(request.selection.display) else { throw ScreenshotError.displayChanged }
+        if let scope = request.settings {
+            guard scope.validate(), scope.frame.intersects(request.selection.rect) else {
+                throw ScreenshotError.settingsUnavailable
+            }
+        }
         #if DEBUG
         if let scope = request.practice {
             guard scope.validate(), scope.window.isVisible, !scope.window.isMiniaturized,
@@ -313,11 +411,9 @@ final class ScreenshotService: ScreenshotCapturing {
         return values.allSatisfy { $0.isFinite && abs($0) <= 0.000_001 }
     }
 
-    #if DEBUG
-    private static func quartzFrame(for appKitFrame: CGRect) throws -> CGRect {
+    fileprivate static func quartzFrame(for appKitFrame: CGRect) throws -> CGRect {
         guard let primary = NSScreen.screens.first else { throw ScreenshotError.displayChanged }
         return CGRect(x: appKitFrame.minX, y: primary.frame.maxY - appKitFrame.maxY,
                       width: appKitFrame.width, height: appKitFrame.height)
     }
-    #endif
 }

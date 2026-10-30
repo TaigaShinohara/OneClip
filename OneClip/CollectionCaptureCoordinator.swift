@@ -116,13 +116,17 @@ final class CollectionCaptureCoordinator: ObservableObject {
 
     /// Menu and collection key add; the single key only reveals the current panel.
     func beginOrAdd() {
+        beginOrAdd(rememberOrigin: true)
+    }
+
+    private func beginOrAdd(rememberOrigin: Bool) {
         #if DEBUG
         if M2FailureLab.isEnabled { return }
         #endif
         guard !isStopping, !interface.captureEntryBlocked, !isWorking, !workSlot.isOccupied else { return }
         guard environmentAvailable(start: true) else { return }
         if !isActive { sessionID = UUID(); revision = UUID(); phase = .ready }
-        interface.rememberExternalApplication()
+        if rememberOrigin { interface.rememberExternalApplication() }
         if !preferences.hasSeenCollectionGuide {
             let token = revision
             phase = .onboarding
@@ -131,7 +135,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
                 self.interface.hideCaptureGuide()
                 self.preferences.hasSeenCollectionGuide = true
                 self.phase = .ready
-                self.beginOrAdd()
+                self.beginOrAdd(rememberOrigin: false)
             }, cancelled: { [weak self] in
                 guard self?.revision == token else { return }
                 self?.discard()
@@ -204,7 +208,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
     func retryPermission() {
         guard phase == .permission, !interface.captureEntryBlocked, environmentAvailable() else { return }
         guard permissionCheck() else { permissionMessage = "許可後に「もう一度試す」を押してください"; return }
-        interface.hidePermission(); phase = .ready; beginOrAdd()
+        interface.hidePermission(); phase = .ready; beginOrAdd(rememberOrigin: false)
     }
 
     private func confirm(_ selection: CaptureSelection, token: UUID) {
@@ -217,13 +221,14 @@ final class CollectionCaptureCoordinator: ObservableObject {
             let budget = CaptureImageBudgetContext(existing: assets.map(\.metrics), replacementIndex: replacementIndex)
             _ = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
                                                             bytesPerRow: stride, scale: Double(selection.display.scale)), limits: limits)
+            let settings = try interface.settingsCaptureScope(for: selection)
             guard interface.hideSelection() else { fail("選択画面を閉じられず、取得を中止しました"); return }
             let identifier = UUID()
             guard workSlot.acquire(identifier) else { fail("前の処理が終わるまで待ってください"); return }
             #if DEBUG
-            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, practice: selectedPractice)
+            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings, practice: selectedPractice)
             #else
-            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget)
+            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings)
             #endif
             let session = sessionID
             let target = replacementIndex
@@ -239,6 +244,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
                         self?.isCurrent(session: session, token: token) == true
                     })
                     guard self.isCurrent(session: session, token: token), !Task.isCancelled else { return }
+                    if let settings = request.settings, !settings.validate() { throw ScreenshotError.settingsUnavailable }
                     _ = try budget.validateCandidate(candidate.metrics, limits: self.limits)
                     if let target { self.assets[target] = candidate } else { self.assets.append(candidate) }
                     self.hasAdoptedSource = true
@@ -417,6 +423,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
         interface.showCollection(activate: interface.isOneClipActive)
     }
     private func errorMessage(_ error: any Error, fallback: String) -> String {
+        if error as? ScreenshotError == .settingsUnavailable { return "設定画面が変わりました。旧素材を保持しています。範囲を選び直してください" }
         if let error = error as? M0ImageError { return (error.errorDescription ?? fallback) + " 小さい範囲にするか、不要な素材を削除してください。" }
         if let error = error as? ScreenshotError, error == .imageLimitExceeded { return "画像が上限を超えます。旧素材を保持しています。小さい範囲を選んでください" }
         return fallback

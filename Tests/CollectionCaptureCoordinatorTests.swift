@@ -38,7 +38,9 @@ struct CollectionCaptureCoordinatorTests {
             ("M3-COORD-23 hidden or replaced decisions reject old buttons and completions", testDecisionLifetime),
             ("M3-COORD-24 delivered display change invalidates retained and pending owners", testDisplayChangeDelivery),
             ("M3-COORD-25 cancel rechecks environment permission and protected data", testUnavailableCancellation),
-            ("M3-COORD-26 display errors invalidate while ordinary capture failures retain sources", testDisplayChangeError)
+            ("M3-COORD-26 display errors invalidate while ordinary capture failures retain sources", testDisplayChangeError),
+            ("SETTINGS-COLLECTION-01 invalid settings preserves additions and replacements", testSettingsBoundary),
+            ("SETTINGS-COLLECTION-02 guide and permission preserve entry origin", testSettingsOrigin)
         ]
         for (name, body) in groups {
             try await body()
@@ -64,6 +66,11 @@ struct CollectionCaptureCoordinatorTests {
     final class FakeInterface: CollectionCaptureInterface {
         var isOneClipActive = true
         var captureEntryBlocked = false
+        var rejectSettings = false
+        func settingsCaptureScope(for selection: CaptureSelection) throws -> SettingsCaptureScope? {
+            if rejectSettings { throw ScreenshotError.settingsUnavailable }
+            return nil
+        }
         var environmentAvailable = true
         var captureEnvironmentStatus: String { "模擬利用状態を確認できません" }
         var prepareResult = true
@@ -381,6 +388,52 @@ struct CollectionCaptureCoordinatorTests {
                    && h.coordinator.phase == .ready && h.clipboard.calls == 0, "Cancelled/failed addition lost old source or wrote")
         try await h.add(index: 2, width: 18)
         try expect(h.coordinator.assets.count == 2 && h.coordinator.assets[0].image === original, "Addition could not explicitly recover")
+    }
+
+    @MainActor
+    static func testSettingsBoundary() async throws {
+        for replacing in [false, true] {
+            let h = try Harness(); defer { h.cleanUp() }
+            try await h.add()
+            let original = h.coordinator.assets[0].image
+            let calls = h.capturer.calls
+            h.interface.rejectSettings = true
+            if replacing { h.coordinator.replace(at: 0) } else { h.coordinator.beginOrAdd() }
+            try h.select(); await h.coordinator.waitForWorker()
+            try expect(h.capturer.calls == calls && h.clipboard.calls == 0 && !h.slot.isOccupied
+                       && h.coordinator.assets.count == 1 && h.coordinator.assets[0].image === original,
+                       "Settings rejection captured, wrote, or lost an existing source")
+            try expect(h.coordinator.phase == .ready && h.coordinator.statusText.contains("設定画面"),
+                       "Settings rejection did not return to the retained collection")
+            h.interface.rejectSettings = false
+            try await h.add(index: 2)
+            try expect(h.coordinator.assets.count == 2, "Fresh addition failed after window rejection")
+            h.capturer.errorNext = .settingsUnavailable
+            h.coordinator.replace(at: 0); try h.select(); await h.coordinator.waitForWorker()
+            try expect(h.coordinator.assets[0].image === original && h.clipboard.calls == 0
+                       && h.coordinator.statusText.contains("設定画面"),
+                       "Late settings invalidation replaced old material or lost its explanation")
+        }
+    }
+
+    @MainActor
+    static func testSettingsOrigin() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        h.preferences.hasSeenCollectionGuide = false
+        h.coordinator.beginOrAdd()
+        try expect(h.interface.rememberCalls == 1, "Entry did not remember origin")
+        h.interface.guideStarted?()
+        try expect(h.interface.rememberCalls == 1 && h.coordinator.phase == .selecting,
+                   "Collection guide replaced the entry origin")
+        h.coordinator.cancelOperation()
+        h.permissions.allowed = false
+        h.coordinator.beginOrAdd()
+        let entries = h.interface.rememberCalls
+        h.permissions.allowed = true
+        h.coordinator.retryPermission()
+        try expect(h.interface.rememberCalls == entries && h.coordinator.phase == .selecting,
+                   "Permission retry replaced origin after hiding its window")
+        h.coordinator.cancelOperation()
     }
 
     @MainActor
