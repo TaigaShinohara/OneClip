@@ -42,7 +42,9 @@ struct SingleCaptureCoordinatorTests {
             ("D06-COORD-03 environment events reject gated late encoding and keep worker occupied", testEnvironmentLateEncoding),
             ("D06-COORD-04 unavailable session blocks entry and retained retry", testSessionFenceEntry),
             ("D06-COORD-05 session fence rejects late capture without a delivered callback", testSessionFenceCapture),
-            ("D06-COORD-06 session fence rejects late encoding and error UI", testSessionFenceEncoding)
+            ("D06-COORD-06 session fence rejects late encoding and error UI", testSessionFenceEncoding),
+            ("SETTINGS-COORD-01 invalid window stops before capture or write", testSettingsBoundary),
+            ("SETTINGS-COORD-02 guide and retry preserve entry origin", testSettingsOrigin)
         ]
         for (name, body) in groups {
             try await body()
@@ -107,6 +109,11 @@ struct SingleCaptureCoordinatorTests {
     final class FakeInterface: SingleCaptureInterface {
         var isOneClipActive = true
         var captureEntryBlocked = false
+        var rejectSettings = false
+        func settingsCaptureScope(for selection: CaptureSelection) throws -> SettingsCaptureScope? {
+            if rejectSettings { throw ScreenshotError.settingsUnavailable }
+            return nil
+        }
         var environmentAvailable = true
         var environmentValidation: (@MainActor () -> Bool)?
         func validateCaptureEnvironment() -> Bool { environmentValidation?() ?? environmentAvailable }
@@ -417,6 +424,49 @@ struct SingleCaptureCoordinatorTests {
         h.interface.selected?(h.selection)
         await h.coordinator.waitForWorker()
         try expect(h.capturer.calls == 2 && h.clipboard.successfulWrites == 1, "Capture retry did not complete")
+    }
+
+    @MainActor
+    static func testSettingsBoundary() async throws {
+        let h = try Harness()
+        h.interface.rejectSettings = true
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        try expect(h.capturer.calls == 0 && h.clipboard.calls == 0 && !h.coordinator.hasRetainedImage,
+                   "Changed settings window reached capture or clipboard")
+        try expect(h.coordinator.phase == .failure && h.coordinator.problem?.message.contains("設定画面") == true,
+                   "Changed settings did not explain why selection stopped")
+        h.interface.rejectSettings = false
+        h.coordinator.retrySelection()
+        h.interface.selected?(h.selection)
+        await h.coordinator.waitForWorker()
+        try expect(h.capturer.calls == 1 && h.clipboard.successfulWrites == 1,
+                   "A fresh explicit selection could not recover after settings changed")
+    }
+
+    @MainActor
+    static func testSettingsOrigin() async throws {
+        let h = try Harness(guideSeen: false)
+        h.coordinator.begin()
+        try expect(h.interface.rememberCalls == 1, "Entry did not remember its origin")
+        h.interface.guideStarted?()
+        try expect(h.interface.rememberCalls == 1 && h.coordinator.phase == .selecting,
+                   "Guide dismissal replaced origin with its newly key underlying window")
+        h.interface.rejectSettings = true
+        h.interface.selected?(h.selection)
+        h.interface.rejectSettings = false
+        h.coordinator.retrySelection()
+        try expect(h.interface.rememberCalls == 1, "Retry replaced the task origin")
+        h.coordinator.cancel()
+        h.permissions.allowed = false
+        h.coordinator.begin()
+        try expect(h.interface.rememberCalls == 2 && h.coordinator.phase == .permission,
+                   "New entry failed to refresh origin")
+        h.permissions.allowed = true
+        h.coordinator.retryPermission()
+        try expect(h.interface.rememberCalls == 2 && h.coordinator.phase == .selecting,
+                   "Permission retry replaced origin after hiding its window")
+        h.coordinator.cancel()
     }
 
     @MainActor

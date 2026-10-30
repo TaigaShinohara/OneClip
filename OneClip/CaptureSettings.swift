@@ -7,6 +7,19 @@ import SwiftUI
 final class CaptureSettingsController: NSObject, NSWindowDelegate {
     static let shared = CaptureSettingsController()
     private var window: NSWindow?
+    private(set) var captureGeneration = UUID()
+    var captureWindow: NSWindow? {
+        guard !NSApp.isHidden, let window, window.isVisible, !window.isMiniaturized,
+              window.isOnActiveSpace else { return nil }
+        return window
+    }
+    fileprivate var canAcceptKeySetting: Bool { NSApp.isActive && isRecordingWindow(window) }
+    var blocksCapture: Bool {
+        #if DEBUG
+        if showingNotificationDiagnostics { return true }
+        #endif
+        return ProductHotKeyController.shared.settingsInteractionBlocked || window?.attachedSheet != nil
+    }
     var isVisible: Bool {
         #if DEBUG
         if showingNotificationDiagnostics { return true }
@@ -61,12 +74,12 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
     func showNotificationDiagnostics() {
         guard canShowNotificationDiagnostics else { return }
         let keys = ProductHotKeyController.shared
-        keys.cancelShortcutRecording()
+        finishEditing()
         showingNotificationDiagnostics = true
         keys.settingsInteractionBlocked = true
         defer {
             showingNotificationDiagnostics = false
-            keys.settingsInteractionBlocked = window?.isVisible == true
+            keys.settingsInteractionBlocked = false
             NativeCaptureInterface.shared.collectionCoordinator?.objectWillChange.send()
         }
         let alert = NSAlert()
@@ -85,7 +98,8 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
         guard !capture.isWorking, capture.phase != .selecting,
               !NativeCaptureInterface.shared.hasDiscardConfirmation,
               canShowAdditional?() != false else { return }
-        ProductHotKeyController.shared.settingsInteractionBlocked = true
+        finishEditing()
+        captureGeneration = UUID()
         if window == nil {
             let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 440),
                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
@@ -103,24 +117,28 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
     }
 
     func hide() {
-        ProductHotKeyController.shared.cancelShortcutRecording()
+        captureGeneration = UUID()
+        finishEditing()
         window?.orderOut(nil)
-        ProductHotKeyController.shared.settingsInteractionBlocked = false
-        NativeCaptureInterface.shared.collectionCoordinator?.objectWillChange.send()
     }
 
     func windowWillClose(_ notification: Notification) {
-        ProductHotKeyController.shared.cancelShortcutRecording()
-        ProductHotKeyController.shared.settingsInteractionBlocked = false
-        NativeCaptureInterface.shared.collectionCoordinator?.objectWillChange.send()
-    }
-
-    func windowDidBecomeKey(_ notification: Notification) {
-        ProductHotKeyController.shared.settingsInteractionBlocked = true
+        captureGeneration = UUID()
+        finishEditing()
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        ProductHotKeyController.shared.cancelShortcutRecording()
+        finishEditing()
+    }
+
+    func windowDidMove(_ notification: Notification) { captureGeneration = UUID() }
+    func windowDidResize(_ notification: Notification) { captureGeneration = UUID() }
+
+    private func finishEditing() {
+        let keys = ProductHotKeyController.shared
+        keys.discardQueuedPresses()
+        keys.settingsInteractionBlocked = false
+        NativeCaptureInterface.shared.collectionCoordinator?.objectWillChange.send()
     }
 }
 
@@ -166,7 +184,7 @@ private struct CaptureSettingsView: View {
                         }
                     }
                     .padding(.bottom, 22)
-                    Label(keys.hasPendingCleanup ? "メニューから撮影できます。" : "設定済みのキーは、設定を閉じると使えます。", systemImage: "info.circle")
+                    Label(keys.settingsInteractionBlocked ? "キーの設定を確定するか取り消すと撮影できます。" : keys.hasPendingCleanup ? "メニューから撮影できます。" : "設定を開いたまま撮影できます。", systemImage: "info.circle")
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                         .padding(.bottom, 16)
@@ -190,6 +208,12 @@ private struct CaptureSettingsView: View {
         }
         .frame(width: 540, height: min(510, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: keys.settingsInteractionBlocked) { _, blocked in
+            if !blocked && (recording || candidate != nil) {
+                resetInput(for: role)
+                inputMessage = "キー入力を取り消しました。現在の設定は変えていません。"
+            }
+        }
     }
 
     private var header: some View {
@@ -245,6 +269,7 @@ private struct CaptureSettingsView: View {
                 Spacer(minLength: 8)
                 Button(keys.desiredChord(for: keyRole) == nil ? "設定…" : "変更…") {
                     resetInput(for: keyRole)
+                    keys.settingsInteractionBlocked = true
                     recording = true
                 }
                 .buttonStyle(.bordered).buttonBorderShape(.capsule)
@@ -307,9 +332,13 @@ private struct CaptureSettingsView: View {
                         ShortcutKeycaps(chord: candidate)
                         HStack {
                             Button("このキーを設定") {
+                                guard keys.settingsInteractionBlocked, CaptureSettingsController.shared.canAcceptKeySetting else {
+                                    resetInput(for: role)
+                                    return
+                                }
                                 let succeeded = keys.setChord(candidate, for: role)
-                                if succeeded { self.candidate = nil }
-                                report(succeeded ? "設定しました。設定を閉じると使えます。" : keys.statusText(for: role))
+                                if succeeded { resetInput(for: role) }
+                                report(succeeded ? "設定しました。このまま撮影できます。" : keys.statusText(for: role))
                             }.buttonStyle(.borderedProminent)
                             Button("取り消す") { resetInput(for: keyRole) }
                         }
@@ -340,6 +369,7 @@ private struct CaptureSettingsView: View {
 
     private func resetInput(for newRole: CaptureHotKeyRole) {
         keys.cancelShortcutRecording()
+        keys.settingsInteractionBlocked = false
         recording = false
         candidate = nil
         inputMessage = ""
@@ -402,7 +432,11 @@ private struct ShortcutRecorder: NSViewRepresentable {
     func makeNSView(context: Context) -> ShortcutRecorderView { ShortcutRecorderView() }
     func updateNSView(_ view: ShortcutRecorderView, context: Context) {
         view.label = recording ? "組合せを押してください（Escで取消）" : candidate?.displayName ?? "新しいキーはまだ選んでいません"
-        view.onCancel = { recording = false; message = "キー入力を取り消しました。現在の設定は変えていません。" }
+        view.onCancel = {
+            keys.settingsInteractionBlocked = false
+            recording = false
+            message = "キー入力を取り消しました。現在の設定は変えていません。"
+        }
         view.onCandidate = { chord in
             if let reason = chord.validationMessage { message = reason; return }
             candidate = chord
