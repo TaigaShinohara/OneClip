@@ -144,8 +144,6 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
 
 private struct CaptureSettingsView: View {
     @ObservedObject var keys: ProductHotKeyController
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     @State private var role: CaptureHotKeyRole = .single
     @State private var candidate: HotKeyChord?
     @State private var recording = false
@@ -235,32 +233,11 @@ private struct CaptureSettingsView: View {
         .padding(.horizontal, 4)
     }
 
-    private func accent(for keyRole: CaptureHotKeyRole) -> Color {
-        if keyRole == .single {
-            return colorScheme == .dark
-                ? Color(red: 0.62, green: 0.68, blue: 1)
-                : Color(red: 0.32, green: 0.39, blue: 0.76)
-        }
-        return colorScheme == .dark
-            ? Color(red: 0.46, green: 0.80, blue: 0.74)
-            : Color(red: 0.13, green: 0.46, blue: 0.42)
-    }
-
     private func shortcutCard(for keyRole: CaptureHotKeyRole) -> some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
-                Image(systemName: keyRole == .single ? "viewfinder" : "square.stack")
-                    .font(.system(size: 21, weight: .medium))
-                    .foregroundStyle(accent(for: keyRole))
-                    .frame(width: 46, height: 46)
-                    .background {
-                        Circle().fill(
-                            LinearGradient(colors: [accent(for: keyRole).opacity(0.16),
-                                                    accent(for: keyRole).opacity(0.07)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                        )
-                    }
-                    .accessibilityHidden(true)
+                OneClipBadge(systemName: keyRole == .single ? "viewfinder" : "square.stack",
+                             tone: keyRole == .single ? .single : .collection)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(keyRole.title).font(.system(size: 15, weight: .semibold))
                     Text(keyRole == .single ? "選んだ範囲をすぐコピー" : "必要な箇所を1枚にまとめる")
@@ -354,16 +331,7 @@ private struct CaptureSettingsView: View {
                 Text(detail).font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-        .background {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color(nsColor: .controlBackgroundColor))
-                .shadow(color: .black.opacity(colorScheme == .dark ? 0.07 : 0.035), radius: 10, y: 3)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.035))
-        }
+        .oneClipCard()
         .id(keyRole)
     }
 
