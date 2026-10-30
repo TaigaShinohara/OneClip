@@ -37,7 +37,11 @@ struct ProductHotKeyTests {
             ("M3-KEY-11 local and registered candidates share one generation", testRecordingLocalAndGeneration),
             ("M3-KEY-12 context loss and close reject late recorder presses without capture fallthrough", testRecordingContextLoss),
             ("M3-KEY-13 stopped and ambiguous backends cannot feed a recorder", testRecordingUnavailable),
-            ("M3-KEY-14 presentation boundaries reject both roles' delayed presses", testPresentationBoundary)
+            ("M3-KEY-14 presentation boundaries reject both roles' delayed presses", testPresentationBoundary),
+            ("SETTINGS-KEY-01 editing completion and cancellation require a fresh down edge", testHeldEditingBoundary),
+            ("SETTINGS-KEY-02 local candidates and reordered native repeats cannot escape editing", testLocalCandidateRepeat),
+            ("SETTINGS-KEY-03 a held unregistered candidate never replaces the effective key", testHeldRegistration),
+            ("SETTINGS-KEY-04 native edge normalization survives stale release and registration changes", testNativeEdgeNormalization)
         ]
         for (name, body) in groups {
             try body()
@@ -72,7 +76,10 @@ struct ProductHotKeyTests {
         var removedIDs: [UInt32] = []
         var finishCalls = 0
         var duringRegister: (@MainActor (UInt32) -> Void)?
+        var heldKeyCodes: Set<UInt32> = []
         private var nextID: UInt32 = 1
+
+        func isKeyDown(_ keyCode: UInt32) -> Bool { heldKeyCodes.contains(keyCode) }
 
         func register(_ chord: HotKeyChord) -> Result<HotKeyRegistration, HotKeyBackendFailure> {
             attemptedChords.append(chord)
@@ -113,12 +120,24 @@ struct ProductHotKeyTests {
         }
 
         func advance() -> EventTime { currentEventTime += 0.01; return currentEventTime }
+        func press(_ id: UInt32, at time: EventTime? = nil, isRepeat: Bool = false) {
+            onPressed?(ProductHotKeyPress(identifier: id, occurredAt: time ?? advance(), isRepeat: isRepeat))
+        }
+        func release(_ id: UInt32, at time: EventTime? = nil) {
+            onPressed?(ProductHotKeyPress(identifier: id, occurredAt: time ?? advance(), kind: .released))
+        }
+        /// Existing scenario actions represent one physical tap, including its release.
         func emit(_ id: UInt32, at time: EventTime? = nil) {
-            onPressed?(ProductHotKeyPress(identifier: id, occurredAt: time ?? advance()))
+            press(id, at: time)
+            release(id)
         }
         func queued(_ id: UInt32, at time: EventTime? = nil) -> @MainActor () -> Void {
             let press = ProductHotKeyPress(identifier: id, occurredAt: time ?? advance())
-            return { [weak self] in self?.onPressed?(press) }
+            let release = ProductHotKeyPress(identifier: id, occurredAt: advance(), kind: .released)
+            return { [weak self] in
+                self?.onPressed?(press)
+                self?.onPressed?(release)
+            }
         }
     }
 
@@ -842,5 +861,112 @@ struct ProductHotKeyTests {
                    && h.controller.activeChord == first && h.controller.activeCollectionChord == second,
                    "A presentation boundary changed preferences or actual registrations")
         h.controller.stop()
+    }
+
+    @MainActor
+    static func testHeldEditingBoundary() throws {
+        for id in [UInt32(1), UInt32(2)] {
+            let h = Harness(saved: first, savedCollection: second)
+            h.controller.start()
+            h.controller.settingsInteractionBlocked = true
+            var candidates: [HotKeyChord] = []
+            _ = h.controller.beginShortcutRecording(allowed: { true }, candidate: { candidates.append($0) })
+            h.backend.press(id)
+            try expect(candidates == [id == 1 ? first : second], "Held registered input was not one candidate")
+            h.controller.settingsInteractionBlocked = false // Candidate was explicitly accepted/cancelled.
+            h.backend.press(id, isRepeat: true)
+            h.backend.press(id, isRepeat: true)
+            try expect(h.presses == 0 && h.collectionPresses == 0, "Editing completion converted repeat into capture")
+            h.backend.release(id)
+            h.backend.emit(id)
+            try expect(h.presses + h.collectionPresses == 1, "A new press after release did not capture")
+
+            h.controller.settingsInteractionBlocked = true
+            h.backend.press(id) // Editing loses focus/closes before a candidate is consumed.
+            h.controller.cancelShortcutRecording()
+            h.controller.settingsInteractionBlocked = false
+            h.backend.press(id, isRepeat: true)
+            h.backend.release(id)
+            try expect(h.presses + h.collectionPresses == 1, "Context loss converted held input into capture")
+            h.backend.emit(id)
+            try expect(h.presses + h.collectionPresses == 2, "Explicit fresh press did not recover after cancellation")
+            h.controller.stop()
+        }
+    }
+
+    @MainActor
+    static func testLocalCandidateRepeat() throws {
+        let h = Harness(saved: first, savedCollection: second)
+        h.controller.start()
+        h.controller.settingsInteractionBlocked = true
+        var candidates: [HotKeyChord] = []
+        guard let token = h.controller.beginShortcutRecording(allowed: { true }, candidate: { candidates.append($0) }) else {
+            throw Failure(description: "Cannot arm local candidate repeat scenario")
+        }
+        let downTime = h.backend.advance()
+        try expect(h.controller.submitShortcutCandidate(first, occurredAt: downTime, recording: token),
+                   "Local candidate was not accepted")
+        h.controller.settingsInteractionBlocked = false
+        // Native normalization happens before the actor hop. Even if the repeat arrives before
+        // the original Carbon down event, it remains a repeat and cannot request a capture.
+        h.backend.press(1, isRepeat: true)
+        h.backend.press(1, at: downTime)
+        h.backend.press(1, isRepeat: true)
+        try expect(candidates == [first] && h.presses == 0, "Local/Carbon duplicate or reordered repeat escaped editing")
+        h.backend.release(1)
+        h.backend.emit(1)
+        try expect(h.presses == 1, "Fresh key after local/Carbon duplicate did not resume")
+        h.controller.stop()
+    }
+
+    @MainActor
+    static func testHeldRegistration() throws {
+        for role in CaptureHotKeyRole.allCases {
+            let h = Harness(saved: first, savedCollection: second)
+            h.controller.start()
+            let attempts = h.backend.attemptedChords
+            let registrations = h.backend.registrations
+            h.controller.settingsInteractionBlocked = true
+            h.backend.heldKeyCodes.insert(third.keyCode)
+            try expect(!h.controller.setChord(third, for: role), "Still-held unregistered candidate was registered")
+            try expect(h.backend.attemptedChords == attempts && h.backend.registrations == registrations
+                       && h.store.chord == first && h.collectionStore.chord == second,
+                       "Held candidate changed the effective or persisted setting")
+            try expect(h.controller.statusText(for: role).contains("キーを離して"), "Held candidate did not explain recovery")
+            h.backend.heldKeyCodes.remove(third.keyCode)
+            try expect(h.controller.setChord(third, for: role), "Released candidate could not be explicitly registered")
+            h.controller.settingsInteractionBlocked = false
+            h.backend.emit(3)
+            try expect(h.presses + h.collectionPresses == 1, "New registered key did not deliver its fresh tap")
+            h.controller.stop()
+        }
+    }
+
+    @MainActor
+    static func testNativeEdgeNormalization() throws {
+        var input = ProductHotKeyInputState()
+        input.register(1)
+        input.register(2)
+        func event(_ id: UInt32, _ time: EventTime, _ kind: ProductHotKeyPress.Kind = .pressed) -> ProductHotKeyPress {
+            ProductHotKeyPress(identifier: id, occurredAt: time, kind: kind)
+        }
+        try expect(input.consume(event(99, 1)) == nil, "Unknown native identifier was accepted")
+        try expect(input.consume(event(1, 2))?.isRepeat == false, "Native first down was a repeat")
+        try expect(input.consume(event(1, 3))?.isRepeat == true, "Native held repeat was not normalized")
+        try expect(input.consume(event(1, 2.5, .released)) == nil, "Old release rewound native state")
+        try expect(input.consume(event(1, 4))?.isRepeat == true, "Old release made held native input fresh")
+        try expect(input.consume(event(2, 4))?.isRepeat == false, "One role's hold blocked the other role")
+        try expect(input.consume(event(1, 5, .released))?.kind == .released, "Native release was lost")
+        try expect(input.consume(event(1, 6))?.isRepeat == false, "Native release did not allow a new press")
+        input.unregister(1)
+        try expect(input.consume(event(1, 7)) == nil, "Removed ID survived native normalization")
+        input.register(3, heldAt: 8)
+        try expect(input.consume(event(3, 9))?.isRepeat == true, "Key held during registration was treated as fresh")
+        _ = input.consume(event(3, 10, .released))
+        try expect(input.consume(event(3, 11))?.isRepeat == false, "Registered held key did not recover on release")
+        try expect(input.consume(event(3, .nan, .released)) == nil
+                   && input.consume(event(3, .infinity, .released)) == nil,
+                   "Invalid native clock cleared held state")
+        try expect(input.consume(event(3, 12))?.isRepeat == true, "Invalid native release changed down state")
     }
 }

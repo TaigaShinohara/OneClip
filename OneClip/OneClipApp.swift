@@ -114,8 +114,8 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
         CaptureSettingsController.shared.canShowAdditional = {
             !collection.isWorking && ![.selecting, .onboarding, .permission].contains(collection.phase) && !interface.collectionPresentationBlocksEntry
         }
-        interface.settingsAreVisible = {
-            if CaptureSettingsController.shared.isVisible { return true }
+        interface.settingsBlockCapture = {
+            if CaptureSettingsController.shared.blocksCapture { return true }
             #if DEBUG
             if M2FailureLab.isEnabled, M2FailureLab.shared.isVisible { return true }
             if M3FailureLab.isEnabled, M3FailureLab.shared.isVisible { return true }
@@ -208,11 +208,13 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 enum OneClipModeActions {
     static func single() {
+        guard !NativeCaptureInterface.shared.captureEntryBlocked else { return }
         let collection = CollectionCaptureCoordinator.shared
         if collection.isActive { collection.showPanel(); return }
         SingleCaptureCoordinator.shared.begin()
     }
     static func collection() {
+        guard !NativeCaptureInterface.shared.captureEntryBlocked else { return }
         #if DEBUG
         if M2FailureLab.isEnabled { return }
         #endif
