@@ -50,7 +50,8 @@ struct CollectionCaptureCoordinatorTests {
             ("UX-COLLECTION-07 replacement decisions recheck unavailable data", testReplacementDecisionFences),
             ("UX-COLLECTION-08 single entry fences retained collection without blocking first permission guidance", testSingleEntryRetainedFence),
             ("SECURITY-COLLECTION-01 every environment event clears copied and candidate owners", testEnvironmentRetainedMatrix),
-            ("SECURITY-COLLECTION-02 every event rejects late success and failure at worker boundaries", testEnvironmentLateMatrix)
+            ("SECURITY-COLLECTION-02 every event rejects late success and failure at worker boundaries", testEnvironmentLateMatrix),
+            ("RESULT-COLLECTION-01 confirmed PNGs publish with exact clipboard results and content retry identity", testCaptureResultPublication)
         ]
         for (name, body) in groups {
             try await body()
@@ -146,10 +147,12 @@ struct CollectionCaptureCoordinatorTests {
         var calls = 0
         var accepted = 0
         var expectedCounts: [Int] = []
+        var attemptedData: [Data] = []
         var beforeWrite: (@MainActor () -> Void)?
         var changeCount: Int { count }
         func writePNG(_ data: Data, expectedChangeCount: Int) -> M0ClipboardProbe.Outcome {
             calls += 1; expectedCounts.append(expectedChangeCount)
+            attemptedData.append(data)
             beforeWrite?()
             guard count == expectedChangeCount else {
                 return .init(code: .conflictBeforePrepare, expectedChangeCount: expectedChangeCount,
@@ -462,6 +465,58 @@ struct CollectionCaptureCoordinatorTests {
         try expect(h.interface.rememberCalls == entries && h.coordinator.phase == .selecting,
                    "Permission retry replaced origin after hiding its window")
         h.coordinator.cancelOperation()
+    }
+
+    @MainActor
+    static func testCaptureResultPublication() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        var results: [(png: Data, copied: Bool, id: UUID)] = []
+        h.coordinator.onCaptureResult = { results.append(($0, $1, $2)) }
+        try await h.add()
+        h.coordinator.preparePreview()
+        await h.coordinator.waitForWorker()
+        try expect(results.isEmpty && h.clipboard.calls == 0 && h.coordinator.completed != nil,
+                   "Collection acquisition or preview published an unconfirmed PNG")
+
+        h.clipboard.mode = .rejectedAfterPrepare
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(results.count == 1 && !results[0].copied
+                   && results[0].png == h.clipboard.attemptedData[0]
+                   && h.coordinator.hasRetainedImages,
+                   "A failed collection copy did not publish its exact saveable PNG")
+
+        h.clipboard.mode = .accepted
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(results.count == 2 && results[1].copied && results[1].id == results[0].id
+                   && results[1].png == results[0].png
+                   && results[1].png == h.clipboard.attemptedData[1],
+                   "An unchanged-content retry lost its PNG, result, or retry identity")
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(results.count == 3 && results[2].copied && results[2].id == results[1].id
+                   && results[2].png == h.clipboard.attemptedData[2]
+                   && h.interface.feedback.isEmpty,
+                   "Repeated copying of the same content was republished as a new capture or duplicate feedback")
+
+        try await h.add(index: 2, width: 18)
+        try expect(results.count == 3, "Adding a source published an unfinished collection")
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(results.count == 4 && results[3].copied && results[3].id != results[2].id
+                   && results[3].png == h.clipboard.attemptedData[3]
+                   && results[3].png != results[2].png,
+                   "Modified collection content retained an obsolete retry identity or output")
+
+        h.composer.pauseNext = true
+        h.coordinator.copy()
+        try await waitUntil { h.composer.isWaiting }
+        h.coordinator.cancelOperation()
+        try h.composer.release()
+        await h.coordinator.waitForWorker()
+        try expect(results.count == 4 && h.clipboard.calls == 4 && h.coordinator.hasRetainedImages,
+                   "A cancelled late collection PNG was published for saving")
     }
 
     @MainActor

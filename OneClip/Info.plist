@@ -27,6 +27,6 @@
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>選択した画面の範囲を画像にして、クリップボードへコピーします。画像のファイル保存や外部送信は行いません。</string>
+    <string>選択した画面の範囲を画像にして、クリップボードへコピーします。撮影した画像はこのMacに自動保存します。外部送信は行いません。</string>
 </dict>
 </plist>

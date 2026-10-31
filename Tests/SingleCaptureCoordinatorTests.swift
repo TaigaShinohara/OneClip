@@ -51,7 +51,9 @@ struct SingleCaptureCoordinatorTests {
             ("UX-SINGLE-04 changed external retention rejects encoded PNG and keeps its source", testExternalEncodingBudget),
             ("UX-SINGLE-05 cached retry rechecks external retention before writing", testExternalCachedBudget),
             ("UX-SINGLE-06 actual encoded size cannot bypass the shared budget", testActualEncodedBudget),
-            ("UX-SINGLE-07 activation refreshes permission without starting capture", testPermissionRefresh)
+            ("UX-SINGLE-07 activation refreshes permission without starting capture", testPermissionRefresh),
+            ("RESULT-SINGLE-01 exact PNG and clipboard result publish independently with retry identity", testCaptureResultPublication),
+            ("RESULT-SINGLE-02 cancelled and obsolete results never publish", testCancelledResultPublication)
         ]
         for (name, body) in groups {
             try await body()
@@ -95,12 +97,14 @@ struct SingleCaptureCoordinatorTests {
         var successfulWrites = 0
         var expectedCounts: [Int] = []
         var writtenData: [Data] = []
+        var attemptedData: [Data] = []
 
         var changeCount: Int { count }
 
         func writePNG(_ data: Data, expectedChangeCount: Int) -> M0ClipboardProbe.Outcome {
             calls += 1
             expectedCounts.append(expectedChangeCount)
+            attemptedData.append(data)
             guard count == expectedChangeCount, mode != .conflict else {
                 return M0ClipboardProbe.Outcome(code: .conflictBeforePrepare, expectedChangeCount: expectedChangeCount,
                                                 observedChangeCount: count, preparedChangeCount: nil)
@@ -225,6 +229,8 @@ struct SingleCaptureCoordinatorTests {
 
         var isWaiting: Bool { pending != nil }
 
+        func failNext() { failuresRemaining = 1 }
+
         func encode(_ asset: M0ImageAsset) async throws -> M0CompositionResult {
             calls += 1
             if paused && calls == 1 {
@@ -303,6 +309,92 @@ struct SingleCaptureCoordinatorTests {
             guard let selected = interface.selected else { throw Failure(description: "Selection interface not presented") }
             selected(selection)
         }
+    }
+
+    @MainActor
+    static func testCaptureResultPublication() async throws {
+        let accepted = try Harness()
+        var normal: [(png: Data, copied: Bool, id: UUID)] = []
+        accepted.coordinator.onCaptureResult = { normal.append(($0, $1, $2)) }
+        try accepted.beginAndSelect()
+        await accepted.coordinator.waitForWorker()
+        try expect(normal.count == 1 && normal[0].copied
+                   && normal[0].png == accepted.clipboard.attemptedData[0],
+                   "A successful capture did not publish the exact written PNG and result")
+        try expect(accepted.interface.feedback.isEmpty && !accepted.coordinator.hasRetainedImage,
+                   "The result callback duplicated legacy feedback or retained a successful image")
+
+        // A previous saved image must never become the destination for a newly acquired
+        // image whose first encoding failed before it could publish its own result ID.
+        await accepted.encoder.failNext()
+        try accepted.beginAndSelect()
+        await accepted.coordinator.waitForWorker()
+        try expect(normal.count == 1 && accepted.clipboard.calls == 1
+                   && accepted.coordinator.hasRetainedImage && accepted.coordinator.phase == .failure,
+                   "Encoding failure published a new image before a valid PNG existed")
+        accepted.coordinator.retryCopy()
+        await accepted.coordinator.waitForWorker()
+        try expect(normal.count == 2 && normal[1].copied && normal[1].id != normal[0].id
+                   && normal[1].png == accepted.clipboard.attemptedData[1]
+                   && accepted.capturer.calls == 2 && !accepted.coordinator.hasRetainedImage,
+                   "Retrying a new image after encoding failure reused the previous saved image's identity")
+
+        let rejected = try Harness()
+        var results: [(png: Data, copied: Bool, id: UUID)] = []
+        rejected.coordinator.onCaptureResult = { results.append(($0, $1, $2)) }
+        rejected.clipboard.mode = .rejected
+        try rejected.beginAndSelect()
+        await rejected.coordinator.waitForWorker()
+        try expect(results.count == 1 && !results[0].copied
+                   && results[0].png == rejected.clipboard.attemptedData[0]
+                   && rejected.coordinator.hasRetainedImage,
+                   "A rejected clipboard write suppressed the saveable PNG or its failure result")
+        rejected.clipboard.mode = .accepted
+        rejected.coordinator.retryCopy()
+        await rejected.coordinator.waitForWorker()
+        try expect(results.count == 2 && results[1].copied && results[1].id == results[0].id
+                   && results[1].png == results[0].png
+                   && results[1].png == rejected.clipboard.attemptedData[1],
+                   "A retained-image retry lost its exact PNG, success result, or retry identity")
+        let encodeCalls = await rejected.encoder.calls
+        try expect(rejected.capturer.calls == 1 && encodeCalls == 1,
+                   "Publishing a retained retry needlessly recaptured or encoded the image")
+
+        try rejected.beginAndSelect()
+        await rejected.coordinator.waitForWorker()
+        try expect(results.count == 3 && results[2].copied && results[2].id != results[1].id,
+                   "A fresh capture inherited the previous image's retry identity")
+    }
+
+    @MainActor
+    static func testCancelledResultPublication() async throws {
+        for pausedCapture in [true, false] {
+            let h = try Harness(pauseEncoder: !pausedCapture)
+            var results = 0
+            h.coordinator.onCaptureResult = { _, _, _ in results += 1 }
+            if pausedCapture { h.capturer.mode = .paused }
+            try h.beginAndSelect()
+            if pausedCapture { try await waitUntil { h.capturer.pending != nil } }
+            else { try await waitUntil { await h.encoder.isWaiting } }
+            h.coordinator.cancel()
+            if pausedCapture { try h.capturer.release() }
+            else { try await h.encoder.release() }
+            await h.coordinator.waitForWorker()
+            try expect(results == 0 && h.clipboard.attemptedData.isEmpty
+                       && !h.coordinator.hasRetainedImage,
+                       "A cancelled late capture or PNG was published for saving")
+        }
+
+        let h = try Harness()
+        var results = 0
+        h.coordinator.onCaptureResult = { _, _, _ in results += 1 }
+        h.coordinator.begin()
+        let staleSelection = h.interface.selected
+        h.coordinator.cancel()
+        staleSelection?(h.selection)
+        await h.coordinator.waitForWorker()
+        try expect(results == 0 && h.capturer.calls == 0 && h.clipboard.calls == 0,
+                   "An obsolete selection callback published an image")
     }
 
     @MainActor

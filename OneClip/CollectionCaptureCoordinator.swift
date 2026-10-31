@@ -79,12 +79,15 @@ final class CollectionCaptureCoordinator: ObservableObject {
         }
         #endif
         let value = CollectionCaptureCoordinator(capturer: ScreenshotService(), interface: interface)
+        value.onCaptureResult = { CaptureResultController.shared.receive($0, copied: $1, id: $2, mode: .collection) }
         interface.collectionCoordinator = value
         #if DEBUG
         value.practiceScopeProvider = { [weak interface] display in try interface?.practiceScope(for: display) }
         #endif
         return value
     }()
+
+    var onCaptureResult: (@MainActor (Data, Bool, UUID) -> Void)?
 
     @Published private(set) var phase = CollectionCapturePhase.idle
     @Published private(set) var assets: [M0ImageAsset] = []
@@ -93,7 +96,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
     @Published private(set) var isWorking = false
     @Published private(set) var replacementIndex: Int?
     @Published private(set) var pendingReplacement: CollectionReplacement?
-    @Published private(set) var permissionMessage = "画面収録の許可を確認してください。画像の保存・送信は行いません。"
+    @Published private(set) var permissionMessage = "画面収録の許可を確認してください。完成画像はこのMacに保存します。外部送信は行いません。"
     @Published private(set) var permissionStatus = CapturePermissionStatus.notChecked
     @Published private(set) var contentRevision = UUID()
     @Published private(set) var copiedContentRevision: UUID?
@@ -554,7 +557,9 @@ final class CollectionCaptureCoordinator: ObservableObject {
                     self.phase = .ready
                     self.statusText = "このまとめをコピーしました。次のまとめ撮りを始めるまで編集できます"
                     self.interface.hideCollection()
-                    self.interface.showFeedback("コピーしました。Command + Vで貼り付け。素材は次のまとめ撮りまで編集できます")
+                    if self.onCaptureResult == nil {
+                        self.interface.showFeedback("コピーしました。Command + Vで貼り付け。素材は次のまとめ撮りまで編集できます")
+                    }
                     if self.interface.isOneClipActive { self.interface.returnToCollectionOrigin() }
                 } else {
                     let conflict = outcome.code == .conflictBeforePrepare || outcome.code == .conflictAfterPrepare
@@ -564,6 +569,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
                         : "書込み前に中止しました。"
                     self.fail(reason + boundary + "素材を保持しています。確認して再試行してください")
                 }
+                self.onCaptureResult?(result.pngData, outcome.writeAccepted, content)
             } catch {
                 guard self.isCurrent(session: session, token: token), !Task.isCancelled else { return }
                 self.fail(self.errorMessage(error, fallback: "完成画像を準備できませんでした。素材を保持しています。再試行できます"))
