@@ -164,22 +164,42 @@ struct M4ResourceOwnershipProbe {
     }
     @MainActor
     final class Heartbeat {
+        private static let periodNanoseconds: UInt64 = 50_000_000
         private var task: Task<Void, Never>?
+        private var started: UInt64 = 0
         private var last: UInt64 = 0
         private(set) var count = 0
         private(set) var maximumGap: UInt64 = 0
+        private(set) var firstTaskEntryElapsedNanoseconds: Int64 = -1
+        private(set) var firstCallbackElapsedNanoseconds: Int64 = -1
         enum Series: String, CaseIterable { case warmup, measured }
         struct SeriesObservation { var count = 0; var maximumGap: UInt64 = 0 }
         private var activeSeries = Series.warmup
         private var intervalSeries: Set<Series> = [.warmup]
         private var observations: [Series: SeriesObservation] = [:]
+        private func begin(at now: UInt64) {
+            started = now
+            last = now
+        }
+        private func recordTaskEntry(at now: UInt64) -> UInt64 {
+            let elapsed = now - started
+            firstTaskEntryElapsedNanoseconds = Int64(clamping: elapsed)
+            // The first deadline belongs to start(), rather than the eventual MainActor task
+            // entry. An already late task records its real callback without another 50ms wait.
+            return elapsed < Self.periodNanoseconds ? Self.periodNanoseconds - elapsed : 0
+        }
         func start() {
-            last = DispatchTime.now().uptimeNanoseconds
+            begin(at: DispatchTime.now().uptimeNanoseconds)
             task = Task { [weak self] in
+                guard !Task.isCancelled,
+                      let initialWait = self?.recordTaskEntry(at: DispatchTime.now().uptimeNanoseconds) else { return }
+                if initialWait > 0 {
+                    do { try await Task.sleep(nanoseconds: initialWait) } catch { return }
+                }
                 while !Task.isCancelled {
-                    do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
                     guard let self, !Task.isCancelled else { return }
                     self.tick()
+                    do { try await Task.sleep(nanoseconds: Self.periodNanoseconds) } catch { return }
                 }
             }
         }
@@ -198,7 +218,10 @@ struct M4ResourceOwnershipProbe {
                 if callback { value.count += 1 }
                 observations[series] = value
             }
-            if callback { last = now; count += 1; intervalSeries = [activeSeries] }
+            if callback {
+                if count == 0 { firstCallbackElapsedNanoseconds = Int64(clamping: now - started) }
+                last = now; count += 1; intervalSeries = [activeSeries]
+            }
         }
         private func tick() { observeInterval(until: DispatchTime.now().uptimeNanoseconds, callback: true) }
         func finish() async {
@@ -212,10 +235,80 @@ struct M4ResourceOwnershipProbe {
                 print("M4_OWNER_HEARTBEAT_SERIES series=\(series.rawValue) required=\(required ? 1 : 0) count=\(value.count) maximumGapNanoseconds=\(value.maximumGap) wholeCrossingIntervalIncluded=1 acceptanceGate=aggregate")
             }
         }
+
+        /// Explicit numeric-only self-test. Never run during a measured process: it would warm
+        /// the diagnostic's own code before the cold interval and invalidate that observation.
+        static func selfTest() throws {
+            let millisecond: UInt64 = 1_000_000
+            let cap = 250 * millisecond
+            func require(_ condition: Bool) throws {
+                if !condition { throw ProbeFailure.invariant }
+            }
+            let timely = Heartbeat()
+            timely.begin(at: 0)
+            try require(timely.recordTaskEntry(at: 0) == 50 * millisecond)
+            timely.observeInterval(until: 50 * millisecond, callback: true)
+            try require(timely.maximumGap == 50 * millisecond && timely.count == 1
+                && timely.firstTaskEntryElapsedNanoseconds == 0
+                && timely.firstCallbackElapsedNanoseconds == 50_000_000)
+
+            let delayed = Heartbeat()
+            delayed.begin(at: 0)
+            try require(delayed.recordTaskEntry(at: 200 * millisecond) == 0)
+            delayed.observeInterval(until: 200 * millisecond, callback: true)
+            try require(delayed.maximumGap == 200 * millisecond && delayed.maximumGap <= cap
+                && delayed.firstTaskEntryElapsedNanoseconds == 200_000_000
+                && delayed.firstCallbackElapsedNanoseconds == 200_000_000)
+
+            let starved = Heartbeat()
+            starved.begin(at: 0)
+            try require(starved.recordTaskEntry(at: 800 * millisecond) == 0)
+            starved.observeInterval(until: 800 * millisecond, callback: true)
+            try require(starved.maximumGap == 800 * millisecond && starved.maximumGap > cap
+                && starved.firstTaskEntryElapsedNanoseconds == 800_000_000
+                && starved.firstCallbackElapsedNanoseconds == 800_000_000)
+
+            let unfinished = Heartbeat()
+            unfinished.begin(at: 0)
+            unfinished.observeInterval(until: 800 * millisecond, callback: false)
+            try require(unfinished.maximumGap == 800 * millisecond && unfinished.maximumGap > cap
+                && unfinished.count == 0 && unfinished.firstTaskEntryElapsedNanoseconds == -1
+                && unfinished.firstCallbackElapsedNanoseconds == -1)
+
+            let crossing = Heartbeat()
+            crossing.begin(at: 0)
+            try require(crossing.recordTaskEntry(at: 0) == 50 * millisecond)
+            crossing.beginMeasuredSeries()
+            crossing.observeInterval(until: 800 * millisecond, callback: true)
+            try require(crossing.maximumGap == 800 * millisecond && crossing.maximumGap > cap
+                && crossing.observations[.warmup]?.maximumGap == 800 * millisecond
+                && crossing.observations[.measured]?.maximumGap == 800 * millisecond
+                && crossing.observations[.warmup]?.count == 1 && crossing.observations[.measured]?.count == 1)
+
+            let tail = Heartbeat()
+            tail.begin(at: 0)
+            _ = tail.recordTaskEntry(at: 0)
+            tail.observeInterval(until: 50 * millisecond, callback: true)
+            tail.beginMeasuredSeries()
+            tail.observeInterval(until: 850 * millisecond, callback: false)
+            try require(tail.maximumGap == 800 * millisecond && tail.maximumGap > cap && tail.count == 1
+                && tail.observations[.warmup]?.maximumGap == 800 * millisecond
+                && tail.observations[.measured]?.maximumGap == 800 * millisecond)
+        }
     }
 
     @MainActor
     static func main() async {
+        if Array(CommandLine.arguments.dropFirst()) == ["--heartbeat-self-test"] {
+            do {
+                try Heartbeat.selfTest()
+                print("PASS M4_OWNER_HEARTBEAT_SELF_TEST cases=6 virtualClock=1 probeExecuted=0")
+            } catch {
+                print("FAIL M4_OWNER_HEARTBEAT_SELF_TEST reason=invariant")
+                exit(1)
+            }
+            return
+        }
         let config: Configuration
         do { config = try Configuration(arguments: Array(CommandLine.arguments.dropFirst())) }
         catch { print("M4_OWNER_ABORT reason=invalid_arguments"); exit(2) }
@@ -239,7 +332,7 @@ struct M4ResourceOwnershipProbe {
             }
         }
         if heartbeatRequired { await heartbeat.finish() }
-        print("M4_OWNER_HEARTBEAT required=\(heartbeatRequired ? 1 : 0) periodNanoseconds=50000000 count=\(heartbeat.count) maximumGapNanoseconds=\(heartbeat.maximumGap) mainActorOnly=1 interactiveUIClaim=0")
+        print("M4_OWNER_HEARTBEAT required=\(heartbeatRequired ? 1 : 0) periodNanoseconds=50000000 count=\(heartbeat.count) maximumGapNanoseconds=\(heartbeat.maximumGap) firstTaskEntryElapsedNanoseconds=\(heartbeat.firstTaskEntryElapsedNanoseconds) firstCallbackElapsedNanoseconds=\(heartbeat.firstCallbackElapsedNanoseconds) firstDeadlineFromStart=1 mainActorOnly=1 interactiveUIClaim=0")
         heartbeat.reportSeries(required: heartbeatRequired)
         let idleStarted = DispatchTime.now().uptimeNanoseconds
         reportMemory(phase: "idle", series: "idle", iteration: 0, elapsedNanoseconds: 0, value: observe())

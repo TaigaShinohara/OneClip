@@ -332,3 +332,63 @@ Runtimeの成功を保存・注釈・通常Viewの実OS受入へ拡張しませ�
 quarantine付き新規環境の初回起動、offline初回起動、最低OS／Intel実機、実OS遷移matrix、実GUIの受入は未実証です。
 未説明のRSS／footprint増加、cold Viewの応答基準超過、実SCKの1px不一致は未解決のまま保持します。
 公証の成功をこれらの解消、M4総合・Collection VoiceOver・宣言環境全体の受入へ拡張しません。
+
+
+<a id="security-diagnostic-refinement-20261101"></a>
+## 判定器の厳格化と追加の因果診断（2026-11-01）
+
+製品入力を変えず、`1088770`を基準に試験・診断だけを是正しました。
+製品入力SHA-256 `a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08` と、
+[同候補の公証結果](#security-integrated-notarization-20261031)はその対象に限定して保持します。
+
+### 画素と成立条件
+
+旧grid oracleはRGBAすべてに±8を許容し、alpha247も不透明な黒の期待値に一致し得ました。
+RGBの許容差とalpha255の厳密条件を分離し、crop・色空間・context等の読取り不成立と、alphaゼロ・半透明・混在・不透明を固定分類へ分けました。
+不明値を透明画素に置き換えません。倍率ordinalと実倍率class、half-pointのsource寸法とpixelのoutput寸法も別に記録します。
+
+実grid／samplingの取得前・取得中のcurrent確認・取得後・画素観測後へ、前面app、fixture可視性・不透明性・geometry・表示・既存権限のfenceを追加しました。
+一度崩れた試行は同じ試行の途中で再成立させません。samplingの最大5／8取得という上限は維持します。
+Swift 6 strict concurrencyでコンパイルし、架空metadata5群、1x／2xのgrid各48点、画面外の画素・前提条件oracle45条件が成功しました。
+今回の実SCK取得・窓表示は未実施です。旧1px FAILは取得・正規化・成立条件のどこに原因があるか未確定のまま残します。
+旧full-cropの成功は8点を旧predicateで確認した結果で、全pixel一致・厳密な不透明性の証明へ広げません。
+
+### 初回MainActor callback
+
+初回の50ms期限を、遅れて実行されたTask entryからではなくstart時刻から計算します。
+期限超過なら追加の50msを待たず実callbackを記録し、cold区間・series跨ぎ・終了前tailは全体最大gapへ残します。
+200ms／800ms／callback前終了・series跨ぎ等を含む仮想clock6条件が成功し、Python全131件も成功しました。
+通常の計測processでは自己試験を実行しません。
+実行した診断toolの入力IDは`f17aebb217a707a4f729fb4b402996ff7b4a2cd2`、
+実行物SHA-256は`2cd1d00f6cd2c2246812679756fcebd079960af74637594f38ec9a46a1e3681a`です。
+
+是正後の画面外・画像なしcontrolは初回Task entry367.361417ms、callback367.361542msで、余計な50msは加わっていません。
+最大gapは367.361542msで250msを超過したため、最大3 fresh processの予定を1回で停止しました。
+この初回実行には別の検証processが重なっており、受入用の独立実行として数えません。
+元の861.439375msおよび254.587msのFAILは保持し、初回処理が解決したとは判定しません。
+
+### PNG出力storageを除いた対照
+
+既存のData／CFData／Data consumer対照は、すべて出力PNGをclient bufferへ蓄積していました。
+一時対照の入力IDは`dbd3528c875cfa5542eadab9e517371300f26292`、
+実行物SHA-256は`b18852e634fe955f25f76649d2be129c2504f9fa23b8f090952db36122f117ca`です。
+今回は[ImageIOのdata consumer出力](https://developer.apple.com/documentation/imageio/cgimagedestination)を使い、
+受領byte数だけを数えてPNG Dataを保持しない一時対照を実施しました。製品には組み込まず、正常PNGを偽返却しません。
+実render→Finalize→afterEncoding取消→実worker返却を、2 warmup＋30測定とidle0／5／15／30秒で観測しました。
+
+| 成立・測定項目 | 結果 |
+| --- | --- |
+| Finalize成功／consumer生成・解放／実worker返却 | 各32回、失敗0件 |
+| 1回の出力byte数 | 7,639,055 bytes、32回で一致 |
+| client PNG Data累積・最大／takeData到達 | すべて0 |
+| RSSのblock末尾5点median増分 | 209,420,288 bytes |
+| footprintの同増分 | 217,202,856 bytes |
+| 観測peak | RSS275,726,336 bytes、footprint273,662,792 bytes、process high-water275,759,104 bytes |
+
+E=8MiBを超える増加が残ったため、この1 fresh processで停止し、条件付きのData蓄積armは実行しませんでした。
+この結果はclient PNG storageの重複だけでは増加を説明できないことを示します。
+ImageIO内部やOS allocatorのどれが原因かを確定せず、元の約69MB増加を解消扱いにしません。
+予算・閾値・取消期限は変更せず、allocator設定変更・cache purge・画像保存は行っていません。
+
+試験コード・一時対照の成功を、製品の資源受入や実SCK／GUI／OS遷移・最低OS／Intelの合格へ移しません。
+全体受入は未完了のままです。

@@ -305,6 +305,28 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             with self.assertRaises(resources.EvidenceError):
                 resources.summarize(malformed)
 
+    def test_first_deadline_diagnostics_never_excuse_an_800ms_cold_gap(self):
+        text = fixture("product-control", heartbeat=800_000_000)
+        text = text.replace("M4_OWNER_HEARTBEAT required=1 ",
+            "M4_OWNER_HEARTBEAT firstTaskEntryElapsedNanoseconds=800000000 "
+            "firstCallbackElapsedNanoseconds=800000000 firstDeadlineFromStart=1 required=1 ")
+        summary = resources.summarize(text)
+        self.assertEqual(summary["heartbeat"]["maximumGapNanoseconds"], 800_000_000)
+        with self.assertRaisesRegex(resources.EvidenceError, "heartbeat_exceeds"):
+            resources.calibration_guard(summary, 1024*MIB)
+        result = resources.evaluate(summary, policy(product=True))
+        self.assertEqual(result["acceptance"], "failed")
+        self.assertIn("main_actor_heartbeat_cap", result["violations"])
+
+    def test_no_callback_remains_unobserved_with_first_deadline_diagnostics(self):
+        text = fixture("product-control", heartbeat=800_000_000)
+        text = text.replace("M4_OWNER_HEARTBEAT required=1 periodNanoseconds=50000000 count=10 ",
+            "M4_OWNER_HEARTBEAT firstTaskEntryElapsedNanoseconds=-1 "
+            "firstCallbackElapsedNanoseconds=-1 firstDeadlineFromStart=1 required=1 "
+            "periodNanoseconds=50000000 count=0 ")
+        with self.assertRaisesRegex(resources.EvidenceError, "heartbeat_unobserved"):
+            resources.summarize(text)
+
     def interrupted_fresh(self, initial_exception, *, stubborn=False, cleanup_exception=None,
                           mutate_binary=False):
         with tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
