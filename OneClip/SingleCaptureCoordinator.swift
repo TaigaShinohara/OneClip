@@ -214,10 +214,8 @@ final class SingleCaptureCoordinator: ObservableObject {
             self.encode = { asset, _ in try await encode(asset) }
         } else {
             self.encode = { asset, extraBytes in
-                try await Task.detached(priority: .userInitiated) {
-                    try M0ImageComposer.compose(assets: [asset], limits: limits,
-                                               retainingExtraBytes: extraBytes)
-                }.value
+                try await M0ImageComposer.composeCancellable(assets: [asset], limits: limits,
+                                                              retainingExtraBytes: extraBytes)
             }
         }
     }

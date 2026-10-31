@@ -35,7 +35,7 @@ if [[ ${#tests[@]} == 0 ]]; then
 fi
 for test in "${tests[@]}"; do
     case "$test" in
-        ProductHotKeyTests|SettingsCaptureScopeTests|SingleCaptureCoordinatorTests|CollectionCaptureCoordinatorTests|CollectionPreviewNavigationTests|RegionGeometryTests|ScreenshotBudgetTests|M0ImageCoreTests) ;;
+        ProductHotKeyTests|SettingsCaptureScopeTests|SingleCaptureCoordinatorTests|CollectionCaptureCoordinatorTests|CollectionPreviewNavigationTests|RegionGeometryTests|ScreenshotBudgetTests|M0ImageCoreTests|CaptureSessionMonitorTests|CaptureConsoleUserMonitorTests|CaptureSessionNotificationTests|M0ClipboardProbeTests) ;;
         *) echo "Unknown test suite: $test" >&2; exit 1 ;;
     esac
     preflight
