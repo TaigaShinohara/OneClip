@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import CoreText
+import Darwin
 
 #if !DEBUG
 #error("M4Fixture requires -D DEBUG to reuse M3PracticeFixture; it is a separate executable, not product code.")
@@ -8,7 +9,8 @@ import CoreText
 
 /// Standalone, fabricated capture target for another process (including normal Release OneClip).
 /// All pixels are generated in memory. No screen, pasteboard, file, network or logger is used.
-/// Compile with M0ImageCore.swift and M3PracticeFixture.swift, -D DEBUG, -parse-as-library.
+/// Compile with CaptureSecurityTrace.swift, M0ImageCore.swift and M3PracticeFixture.swift,
+/// -D DEBUG, -parse-as-library. The fixed readiness marker contains no window identity or pixels.
 @main
 struct M4Fixture {
     @MainActor
@@ -98,6 +100,11 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate, NSWindowDe
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         updateDisplay()
+        window.displayIfNeeded()
+        if window.isVisible && window.isOnActiveSpace && window.windowNumber > 0 {
+            print("READY ONECLIP_M4_FIXTURE")
+            fflush(nil)
+        }
     }
 
     @objc private func selectStage(_ sender: NSSegmentedControl) {
