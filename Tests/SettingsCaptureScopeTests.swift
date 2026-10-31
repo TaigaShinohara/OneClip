@@ -341,7 +341,9 @@ struct SettingsCaptureScopeTests {
               screen.visibleFrame.width >= 240, screen.visibleFrame.height >= 180 else {
             throw CaptureFixtureUnavailable(reason: "interactive display required")
         }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier, frontmost > 0 else {
+            throw CaptureFixtureUnavailable(reason: "grid_foreground_identity_not_established")
+        }
         let padding: CGFloat = padded ? 16 : 0
         let frame = CGRect(x: screen.visibleFrame.minX + 24, y: screen.visibleFrame.minY + 24,
                            width: 160 + padding * 2, height: 100 + padding * 2)
@@ -349,8 +351,8 @@ struct SettingsCaptureScopeTests {
         let fixture = makeFixture(frame: frame, color: padded ? FixturePaddedGridView.marginColor : .black, level: .screenSaver)
         if padded { fixture.contentView = FixturePaddedGridView(frame: CGRect(origin: .zero, size: frame.size)) }
         else { fixture.contentView = FixtureGridView(frame: CGRect(origin: .zero, size: frame.size)) }
-        let overlay = makeFixture(frame: CGRect(x: gridFrame.midX, y: gridFrame.midY, width: 60, height: 40),
-                                  color: .magenta, level: .init(rawValue: NSWindow.Level.screenSaver.rawValue + 1))
+        let overlayFrame = CGRect(x: gridFrame.midX, y: gridFrame.midY, width: 60, height: 40)
+        let overlay = makeFixture(frame: overlayFrame, color: .magenta, level: .init(rawValue: NSWindow.Level.screenSaver.rawValue + 1))
         defer { for w in [overlay, fixture] { w.orderOut(nil); w.close() } }
         fixture.orderFrontRegardless(); overlay.orderFrontRegardless()
         fixture.displayIfNeeded(); overlay.displayIfNeeded()
@@ -361,30 +363,68 @@ struct SettingsCaptureScopeTests {
         let display = try ScreenshotService.snapshot(for: screen)
         let scale = display.scale
         let width = Int(gridFrame.width * scale), height = Int(gridFrame.height * scale)
-        print("GRID-CELL fixture=\(padded ? "inner_grid_padding16" : "window_edge_grid") paddingPoints=\(padded ? 16 : 0) originalFailureResolvedByThisCell=0")
+        let overlayID = overlay.windowNumber
+        let fence = TrialCaptureFence()
+        func current(_ rect: CGRect) -> Bool {
+            fence.accepts(scope.validate() && fixture.isVisible && !fixture.isMiniaturized && fixture.isOnActiveSpace
+                && fixture.frame == frame && fixture.isOpaque && fixture.alphaValue == 1
+                && overlay.isVisible && !overlay.isMiniaturized && overlay.isOnActiveSpace
+                && overlay.frame == overlayFrame && overlay.isOpaque && overlay.alphaValue == 1
+                && overlay.windowNumber == overlayID && overlay.attachedSheet == nil && (overlay.childWindows?.isEmpty ?? true)
+                && frame.contains(rect) && gridFrame.contains(rect) && ScreenshotService.currentDisplayMatches(display)
+                && CGPreflightScreenCaptureAccess()
+                && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
+        }
+        let scaleClass = BackingScaleClass(scale)
+        print("GRID-CELL schema=grid_pixel_v2 scaleOrdinal=\(scaleClass.ordinal) backingScaleClass=\(scaleClass.rawValue) sampledPointsPerCrop=8 fixture=\(padded ? "inner_grid_padding16" : "window_edge_grid") paddingPoints=\(padded ? 16 : 0) originalFailureResolvedByThisCell=0")
         let crops = gridCrops(width: width, height: height)
         for (cropIndex, crop) in crops.enumerated() {
             let selection = try CaptureSelection(display: display,
                 rect: CGRect(x: gridFrame.minX + crop.minX / scale, y: gridFrame.maxY - crop.maxY / scale,
                              width: crop.width / scale, height: crop.height / scale))
-            try expect(scope.validate() && frame.contains(selection.rect) && gridFrame.contains(selection.rect), "Grid selection escaped opaque fixture")
+            guard current(selection.rect) else { throw CaptureFixtureUnavailable(reason: "grid_pre_capture_fence_not_established") }
+            print("GRID-REQUEST captureOrdinal=\(cropIndex) scaleOrdinal=\(scaleClass.ordinal) backingScaleClass=\(scaleClass.rawValue) sourceWidthHalfPoints=\(halfPointUnits(selection.rect.width)) sourceHeightHalfPoints=\(halfPointUnits(selection.rect.height)) outputWidthPixels=\(Int(crop.width)) outputHeightPixels=\(Int(crop.height))")
             let trace = CaptureSecurityTrace(enabled: true)
-            let asset = try await ScreenshotService().capture(
-                SingleCaptureRequest(selection: selection, operationID: UUID(), settings: scope, securityTrace: trace),
-                isCurrent: { scope.validate() && frame.contains(selection.rect) && gridFrame.contains(selection.rect) })
+            let asset: M0ImageAsset
+            do {
+                asset = try await ScreenshotService().capture(
+                    SingleCaptureRequest(selection: selection, operationID: UUID(), settings: scope, securityTrace: trace),
+                    isCurrent: { current(selection.rect) })
+            } catch {
+                guard !fence.failed, current(selection.rect) else {
+                    throw CaptureFixtureUnavailable(reason: "grid_capture_fence_not_established")
+                }
+                throw Failure(description: "grid_capture_service_rejected")
+            }
+            guard current(selection.rect) else { throw CaptureFixtureUnavailable(reason: "grid_post_capture_fence_not_established") }
             try expect(asset.image.width == Int(crop.width) && asset.image.height == Int(crop.height), "Grid crop dimensions changed")
-            try verifyGrid(asset.image, crop: crop, width: width, height: height,
-                           scaleOrdinal: scale == 1 ? 0 : scale == 2 ? 1 : 2, cropOrdinal: cropIndex)
+            do {
+                try verifyGrid(asset.image, crop: crop, width: width, height: height,
+                               backingScale: scale, cropOrdinal: cropIndex)
+            } catch {
+                guard current(selection.rect) else { throw CaptureFixtureUnavailable(reason: "grid_observation_fence_not_established") }
+                throw error
+            }
+            guard current(selection.rect) else { throw CaptureFixtureUnavailable(reason: "grid_observation_fence_not_established") }
             let entries = trace.snapshot().entries
             try expect(entries.map(\.code) == [.captureRequested, .captureCallback, .captureReturned], "Actual SCK service interval missing")
             try expect(trace.snapshot().droppedCount == 0, "Grid trace overflow")
         }
-        try expect(NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost,
-                   "Grid test changed foreground")
+        guard current(gridFrame) else { throw CaptureFixtureUnavailable(reason: "grid_final_fence_not_established") }
         if padded {
             print("PASS CAPTURE-GRID-PADDED: 6 inner-grid SCK crops; 16pt opaque margin; original outer-edge failure remains separate")
         } else {
             print("PASS CAPTURE-GRID: 6 real SCK crops; 1px corners, asymmetric quadrants, self-overlay exclusion; in-memory only")
+        }
+    }
+
+    @MainActor
+    final class TrialCaptureFence {
+        private(set) var failed = false
+        func accepts(_ condition: @autoclosure () -> Bool) -> Bool {
+            guard !failed else { return false }
+            if !condition() { failed = true }
+            return !failed
         }
     }
 
@@ -395,6 +435,10 @@ struct SettingsCaptureScopeTests {
         let direct: Bool
         var offsetX: CGFloat = 0
         var offsetY: CGFloat = 0
+        var originOrdinal: Int {
+            guard [CGFloat(0), 0.5].contains(offsetX), [CGFloat(0), 0.5].contains(offsetY) else { return -1 }
+            return (offsetX == 0.5 ? 1 : 0) + (offsetY == 0.5 ? 2 : 0)
+        }
     }
     enum ProviderAlpha: Equatable {
         case unknown, opaque, zero, other
@@ -447,24 +491,30 @@ struct SettingsCaptureScopeTests {
     }
 
     @MainActor
-    static func recordSampling(_ image: CGImage, cell: SamplingCell) throws -> SamplingResult {
+    static func recordSampling(_ image: CGImage, cell: SamplingCell, backingScale: CGFloat,
+                               captureOrdinal: Int) throws -> SamplingResult {
         try expect(image.width == cell.outputPixels && image.height == cell.outputPixels, "sampling_output_dimensions")
         let expected = FixtureGridView.colors[0]
-        var matches = true, opaque = true, zero = true
+        var matches = true, opaque = true, zero = true, hasPartial = false
         for y in 0..<image.height {
             for x in 0..<image.width {
-                guard let bytes = renderedPixel(image, x: x, y: y) else {
-                    throw Failure(description: "sampling_normalization_unavailable")
+                let observation = observePixel(image, x: x, y: y)
+                guard observation.available else {
+                    throw Failure(description: "sampling_normalization_unavailable stage=\(observation.stage.rawValue) normalizedAlphaClass=unavailable")
                 }
-                matches = matches && zip(bytes, expected).allSatisfy { abs(Int($0.0) - $0.1) <= 8 }
-                opaque = opaque && bytes[3] == 255; zero = zero && bytes[3] == 0
+                matches = matches && observation.rgbMatches(expected)
+                opaque = opaque && observation.alpha == .opaque
+                zero = zero && observation.alpha == .zero
+                hasPartial = hasPartial || observation.alpha == .partial
             }
         }
         let raw = providerAlpha(image)
         let palette = [[0, 0, 0, 255]] + FixtureGridView.colors
         let actualClass = palette.firstIndex { pixelMatches(image, x: 0, y: 0, expected: $0) } ?? 5
         let knownEmpty = zero && raw == .zero
-        print("SAMPLING-CELL cell=\(cell.ordinal) path=\(cell.direct ? "diagnostic_direct_config" : "production_service") halfPointExtent=\(cell.extent == 0.5 ? 1 : 0) outputPixels=\(cell.outputPixels) expectedClass=1 actualClass=\(actualClass) expectedMatch=\(matches ? 1 : 0) normalizedAlphaOpaque=\(opaque ? 1 : 0) normalizedAlphaZero=\(zero ? 1 : 0) providerAlphaKnown=\(raw.known) providerAlphaOpaque=\(raw.opaqueCode) providerAlphaZero=\(raw.zeroCode) knownEmptyAlphaZero=\(knownEmpty ? 1 : 0)")
+        let normalizedAlpha: NormalizedAlpha = opaque ? .opaque : zero ? .zero : hasPartial ? .partial : .mixed
+        let scaleClass = BackingScaleClass(backingScale)
+        print("SAMPLING-CELL schema=grid_pixel_v2 captureOrdinal=\(captureOrdinal) originOrdinal=\(cell.originOrdinal) scaleOrdinal=\(scaleClass.ordinal) backingScaleClass=\(scaleClass.rawValue) sourceExtentHalfPoints=\(halfPointUnits(cell.extent)) sourcePixelsAtBackingScale=\(scaleClass == .twoX ? halfPointUnits(cell.extent) : -1) normalizedAlphaClass=\(normalizedAlpha.rawValue) normalizedRGBAAvailable=1 normalizationStage=draw_returned cell=\(cell.ordinal) path=\(cell.direct ? "diagnostic_direct_config" : "production_service") halfPointExtent=\(cell.extent == 0.5 ? 1 : 0) outputPixels=\(cell.outputPixels) expectedClass=1 actualClass=\(actualClass) expectedMatch=\(matches && opaque ? 1 : 0) normalizedRGBMatch=\(matches ? 1 : 0) normalizedAlphaOpaque=\(opaque ? 1 : 0) normalizedAlphaZero=\(zero ? 1 : 0) providerAlphaKnown=\(raw.known) providerAlphaOpaque=\(raw.opaqueCode) providerAlphaZero=\(raw.zeroCode) knownEmptyAlphaZero=\(knownEmpty ? 1 : 0)")
         // Empty alpha is the known diagnostic outcome. An opaque wrong color, unsupported
         // provider interpretation on a mismatch, or disagreement cannot be waved through.
         let knownAlphaDisagrees = (opaque && raw != .unknown && raw != .opaque)
@@ -490,7 +540,9 @@ struct SettingsCaptureScopeTests {
         guard abs(display.scale - 2) <= 0.000_001 else {
             throw CaptureFixtureUnavailable(reason: "sampling ablation requires the selected 2x display")
         }
-        let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        guard let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier, frontmost > 0 else {
+            throw CaptureFixtureUnavailable(reason: "sampling_foreground_identity_not_established")
+        }
         let frame = CGRect(x: screen.visibleFrame.minX + 24, y: screen.visibleFrame.minY + 24, width: 192, height: 132)
         let gridFrame = CGRect(x: frame.minX + 16, y: frame.minY + 16, width: 160, height: 100)
         let uniformFrame = CGRect(x: gridFrame.minX, y: gridFrame.midY, width: 80, height: 50).insetBy(dx: 8, dy: 8)
@@ -502,21 +554,38 @@ struct SettingsCaptureScopeTests {
             throw CaptureFixtureUnavailable(reason: "opaque synthetic fixture unavailable")
         }
         let scope = try SettingsCaptureScope(window: fixture, validate: { fixture.frame == frame && fixture.isOpaque })
+        let fence = TrialCaptureFence()
         func current(_ rect: CGRect) -> Bool {
-            scope.validate() && frame.contains(rect) && gridFrame.contains(rect)
+            fence.accepts(scope.validate() && fixture.isVisible && !fixture.isMiniaturized && fixture.isOnActiveSpace
+                && fixture.frame == frame && fixture.isOpaque && fixture.alphaValue == 1
+                && frame.contains(rect) && gridFrame.contains(rect) && ScreenshotService.currentDisplayMatches(display)
                 && CGPreflightScreenCaptureAccess()
-                && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost
+                && NSWorkspace.shared.frontmostApplication?.processIdentifier == frontmost)
         }
         let reference = try CaptureSelection(display: display, rect: gridFrame)
-        guard current(reference.rect) else { throw Failure(description: "sampling_reference_fence") }
-        let full = try await ScreenshotService().capture(
-            SingleCaptureRequest(selection: reference, operationID: UUID(), settings: scope),
-            isCurrent: { current(reference.rect) })
-        guard current(reference.rect) else { throw Failure(description: "sampling_reference_fence") }
+        guard current(reference.rect) else { throw CaptureFixtureUnavailable(reason: "sampling_reference_fence_not_established") }
+        let full: M0ImageAsset
+        do {
+            full = try await ScreenshotService().capture(
+                SingleCaptureRequest(selection: reference, operationID: UUID(), settings: scope),
+                isCurrent: { current(reference.rect) })
+        } catch {
+            guard !fence.failed, current(reference.rect) else {
+                throw CaptureFixtureUnavailable(reason: "sampling_reference_fence_not_established")
+            }
+            throw Failure(description: "sampling_reference_service_rejected")
+        }
+        guard current(reference.rect) else { throw CaptureFixtureUnavailable(reason: "sampling_reference_fence_not_established") }
         try expect(full.image.width == 320 && full.image.height == 200, "sampling_reference_dimensions")
-        try verifyGrid(full.image, crop: CGRect(x: 0, y: 0, width: 320, height: 200),
-                       width: 320, height: 200, scaleOrdinal: 1, cropOrdinal: 0)
-        print("SAMPLING-REFERENCE passed=1 captures=1 fixture=inner_grid_padding16 originalFailureResolved=0")
+        do {
+            try verifyGrid(full.image, crop: CGRect(x: 0, y: 0, width: 320, height: 200),
+                           width: 320, height: 200, backingScale: display.scale, cropOrdinal: 0)
+        } catch {
+            guard current(reference.rect) else { throw CaptureFixtureUnavailable(reason: "sampling_reference_observation_fence_not_established") }
+            throw error
+        }
+        guard current(reference.rect) else { throw CaptureFixtureUnavailable(reason: "sampling_reference_observation_fence_not_established") }
+        print("SAMPLING-REFERENCE schema=grid_pixel_v2 captureOrdinal=0 scaleOrdinal=1 backingScaleClass=two_x sourceWidthHalfPoints=320 sourceHeightHalfPoints=200 outputWidthPixels=320 outputHeightPixels=200 sampledPoints=8 passed=1 captures=1 fixture=inner_grid_padding16 originalFailureResolved=0")
         let captureLimit = includeOrigins ? 8 : 5
         var completed = 1
         var outcomes: [SamplingResult] = []
@@ -525,21 +594,35 @@ struct SettingsCaptureScopeTests {
                               y: gridFrame.maxY - 16 - cell.offsetY - cell.extent,
                               width: cell.extent, height: cell.extent)
             guard current(rect), uniformFrame.contains(rect), completed < captureLimit else {
-                throw Failure(description: "sampling_cell_scope_or_count_fence")
+                throw CaptureFixtureUnavailable(reason: "sampling_pre_capture_scope_or_count_fence_not_established")
             }
             let selection = try CaptureSelection(display: display, rect: rect)
             let asset: M0ImageAsset
-            if cell.direct {
-                asset = try await diagnosticSamplingCapture(selection: selection, settings: scope,
-                    outputPixels: cell.outputPixels, isCurrent: { current(rect) && uniformFrame.contains(rect) })
-            } else {
-                asset = try await ScreenshotService().capture(
-                    SingleCaptureRequest(selection: selection, operationID: UUID(), settings: scope),
-                    isCurrent: { current(rect) && uniformFrame.contains(rect) })
+            do {
+                if cell.direct {
+                    asset = try await diagnosticSamplingCapture(selection: selection, settings: scope,
+                        outputPixels: cell.outputPixels, isCurrent: { current(rect) && uniformFrame.contains(rect) })
+                } else {
+                    asset = try await ScreenshotService().capture(
+                        SingleCaptureRequest(selection: selection, operationID: UUID(), settings: scope),
+                        isCurrent: { current(rect) && uniformFrame.contains(rect) })
+                }
+            } catch {
+                guard !fence.failed, current(rect), uniformFrame.contains(rect) else {
+                    throw CaptureFixtureUnavailable(reason: "sampling_capture_fence_not_established")
+                }
+                throw Failure(description: "sampling_capture_service_rejected")
             }
             completed += 1
-            guard current(rect), uniformFrame.contains(rect) else { throw Failure(description: "sampling_post_capture_fence") }
-            return try recordSampling(asset.image, cell: cell)
+            guard current(rect), uniformFrame.contains(rect) else { throw CaptureFixtureUnavailable(reason: "sampling_post_capture_fence_not_established") }
+            let result: SamplingResult
+            do { result = try recordSampling(asset.image, cell: cell, backingScale: display.scale, captureOrdinal: completed - 1) }
+            catch {
+                guard current(rect), uniformFrame.contains(rect) else { throw CaptureFixtureUnavailable(reason: "sampling_observation_fence_not_established") }
+                throw error
+            }
+            guard current(rect), uniformFrame.contains(rect) else { throw CaptureFixtureUnavailable(reason: "sampling_observation_fence_not_established") }
+            return result
         }
         for cell in samplingCells { outcomes.append(try await run(cell)) }
         let needsOrigins = outcomes.contains(where: \.empty) && outcomes[1].matchesExpected
@@ -549,7 +632,7 @@ struct SettingsCaptureScopeTests {
                                        offsetX: offset.0, offsetY: offset.1))
             }
         }
-        guard current(gridFrame), completed <= captureLimit else { throw Failure(description: "sampling_final_fence") }
+        guard current(gridFrame), completed <= captureLimit else { throw CaptureFixtureUnavailable(reason: "sampling_final_fence_not_established") }
         print("DONE CAPTURE-SAMPLING captures=\(completed) maximumCaptures=\(captureLimit) retries=0 originsRequested=\(includeOrigins ? 1 : 0) originsNeeded=\(needsOrigins ? 1 : 0) knownEmptyCells=\(outcomes.filter(\.empty).count) diagnosticOnly=1 originalFailureResolved=0")
     }
 
@@ -619,7 +702,8 @@ struct SettingsCaptureScopeTests {
 
     @MainActor
     static func verifyGrid(_ image: CGImage, crop: CGRect, width: Int, height: Int,
-                           scaleOrdinal: Int, cropOrdinal: Int) throws {
+                           backingScale: CGFloat, cropOrdinal: Int) throws {
+        try expect(backingScale.isFinite && backingScale > 0, "grid_oracle_scale_unavailable")
         let samples: [(Int, Int)] = [(0, 0), (image.width - 1, 0), (0, image.height - 1),
             (image.width - 1, image.height - 1), (image.width / 4, image.height / 4),
             (image.width * 3 / 4, image.height / 4), (image.width / 4, image.height * 3 / 4),
@@ -630,12 +714,14 @@ struct SettingsCaptureScopeTests {
             let border = gx == 0 || gy == 0 || gx == width - 1 || gy == height - 1
             let expectedClass = border ? 0 : 1 + (gy < height / 2 ? 0 : 2) + (gx < width / 2 ? 0 : 1)
             let palette = [[0, 0, 0, 255]] + FixtureGridView.colors
-            guard pixelMatches(image, x: x, y: y, expected: palette[expectedClass]) else {
-                // Only fixed fixture classifications are emitted. Unknown screen pixels cannot
-                // become RGB values, an image, a hash, or a framework error in the diagnostic.
-                let actualClass = palette.firstIndex { pixelMatches(image, x: x, y: y, expected: $0) } ?? 5
-                let opaque = renderedPixel(image, x: x, y: y)?.last == 255
-                throw Failure(description: "grid_sample_mismatch scale=\(scaleOrdinal) crop=\(cropOrdinal) sample=\(sampleOrdinal) expectedClass=\(expectedClass) actualClass=\(actualClass) alphaOpaque=\(opaque ? 1 : 0) expectedMatch=0 fixturePaletteMatch=\(actualClass < 5 ? 1 : 0)")
+            let observation = observePixel(image, x: x, y: y)
+            guard observation.matchesOpaqueFixture(palette[expectedClass]) else {
+                // Legacy palette ordinals are display-only. Acceptance requires a completed
+                // normalized read, RGB tolerance and exact opaque alpha, independently.
+                let actualClass = palette.firstIndex { observation.matchesOpaqueFixture($0) } ?? 5
+                let raw = providerAlpha(image)
+                let scaleClass = BackingScaleClass(backingScale)
+                throw Failure(description: "grid_sample_mismatch schema=grid_pixel_v2 scaleOrdinal=\(scaleClass.ordinal) backingScaleClass=\(scaleClass.rawValue) cropOrdinal=\(cropOrdinal) sampleOrdinal=\(sampleOrdinal) outputWidthPixels=\(image.width) outputHeightPixels=\(image.height) sourceWidthHalfPoints=\(halfPointUnits(CGFloat(image.width) / backingScale)) sourceHeightHalfPoints=\(halfPointUnits(CGFloat(image.height) / backingScale)) expectedClass=\(expectedClass) actualClass=\(actualClass) normalizationStage=\(observation.stage.rawValue) normalizedRGBAAvailable=\(observation.available ? 1 : 0) normalizedAlphaClass=\(observation.alpha.rawValue) normalizedAlphaOpaque=\(observation.alpha.opaqueCode) normalizedAlphaZero=\(observation.alpha.zeroCode) providerAlphaKnown=\(raw.known) providerAlphaOpaque=\(raw.opaqueCode) providerAlphaZero=\(raw.zeroCode) providerScope=whole_image_up_to_2px expectedMatch=0 originalFailureResolved=0")
             }
         }
     }
@@ -643,6 +729,7 @@ struct SettingsCaptureScopeTests {
     @MainActor
     static func testSamplingOracle() throws {
         try testGridOracle(report: false, padded: true)
+        try testPixelObservationControls()
         let layouts: [(CGBitmapInfo, CGImageAlphaInfo, [Int])] = [
             (.byteOrder32Little, .premultipliedFirst, [2, 1, 0, 3]), // BGRA
             (.byteOrder32Big, .premultipliedLast, [0, 1, 2, 3]), // RGBA
@@ -689,6 +776,60 @@ struct SettingsCaptureScopeTests {
         print("PASS SAMPLING-ORACLE alphaControls=14 flatColorResamplingCells=4 captures=0 offscreenOnly=1")
     }
 
+    /// Pure controls for the same observation path used by live diagnostics. These are not
+    /// SCK evidence: they establish only that an unavailable read cannot become an opaque PASS.
+    @MainActor
+    static func testPixelObservationControls() throws {
+        let black = [0, 0, 0, 255]
+        for alpha in [UInt8(0), 1, 127, 247, 254, 255] {
+            let image = try alphaFixture(bytes: [0, 0, 0, alpha], order: .byteOrder32Big, alpha: .premultipliedLast)
+            let observation = observePixel(image, x: 0, y: 0)
+            let expected: NormalizedAlpha = alpha == 0 ? .zero : alpha == 255 ? .opaque : .partial
+            try expect(observation.stage == .drawReturned && observation.available && observation.alpha == expected,
+                       "pixel_observation_alpha_class_mismatch")
+            try expect(observation.rgbMatches(black), "pixel_observation_rgb_tolerance_included_alpha")
+            try expect(observation.matchesOpaqueFixture(black) == (alpha == 255)
+                       && pixelMatches(image, x: 0, y: 0, expected: black) == (alpha == 255),
+                       "pixel_observation_nonopaque_fixture_accepted")
+        }
+        for red in [UInt8(8), 9] {
+            let image = try alphaFixture(bytes: [red, 0, 0, 255], order: .byteOrder32Big, alpha: .premultipliedLast)
+            try expect(pixelMatches(image, x: 0, y: 0, expected: black) == (red == 8),
+                       "pixel_observation_rgb_tolerance_boundary_changed")
+        }
+        for alpha in [UInt8(250), 254, 255] {
+            let rgba = [UInt8(51 * Int(alpha) / 255), UInt8(179 * Int(alpha) / 255),
+                        UInt8(77 * Int(alpha) / 255), alpha]
+            let image = try alphaFixture(bytes: rgba, order: .byteOrder32Big, alpha: .premultipliedLast)
+            try expect(matchesFixtureColor(image) == (alpha == 255), "uniform_fixture_nonopaque_alpha_accepted")
+        }
+        let image = try alphaFixture(bytes: [0, 0, 0, 255], order: .byteOrder32Big, alpha: .premultipliedLast)
+        let unavailable: [(PixelObservation, PixelNormalizationStage)] = [
+            (observePixel(image, x: -1, y: 0), .invalidCoordinates),
+            (observePixel(image, x: 0, y: 0, cropper: { _, _ in nil }), .cropUnavailable),
+            (observePixel(image, x: 0, y: 0, colorSpaceFactory: { nil }), .colorSpaceUnavailable),
+            (observePixel(image, x: 0, y: 0, contextFactory: { _, _ in nil }), .contextUnavailable)]
+        for (observation, stage) in unavailable {
+            try expect(observation.stage == stage && !observation.available && observation.bytes == nil
+                       && observation.alpha == .unavailable && observation.alpha.opaqueCode == -1
+                       && observation.alpha.zeroCode == -1 && !observation.matchesOpaqueFixture(black),
+                       "pixel_observation_unavailable_read_became_known_alpha_or_pass")
+        }
+        let observed = observePixel(image, x: 0, y: 0)
+        try expect(!observed.matchesOpaqueFixture([]), "pixel_observation_missing_expected_channels_accepted")
+        try expect(!observed.matchesOpaqueFixture([0, 0, 0, 0]), "pixel_observation_nonopaque_expectation_accepted")
+        let metadata = [BackingScaleClass(2).ordinal == 1, BackingScaleClass(2) == .twoX,
+            halfPointUnits(0.5) == 1, halfPointUnits(1) == 2, halfPointUnits(0.25) == -1,
+            halfPointUnits(.nan) == -1,
+            SamplingCell(ordinal: 6, extent: 1, outputPixels: 2, direct: false, offsetX: 0.5, offsetY: 0.5).originOrdinal == 3]
+        try expect(metadata.allSatisfy { $0 }, "pixel_observation_scale_or_origin_unit_metadata_mismatch")
+        let fence = TrialCaptureFence()
+        try expect(fence.accepts(true), "pixel_observation_valid_capture_fence_rejected")
+        try expect(!fence.accepts(false) && fence.failed, "pixel_observation_failed_capture_fence_not_latched")
+        try expect(!fence.accepts(true), "pixel_observation_failed_capture_trial_resumed")
+        print("PASS PIXEL-OBSERVATION-ORACLE strictAlphaControls=6 rgbControls=2 uniformFixtureControls=3 unavailableControls=4 invalidExpectedControls=2 metadataControls=7 captureFenceControls=3 captures=0 offscreenOnly=1 originalFailureResolved=0")
+    }
+
     static func alphaFixture(bytes: [UInt8], order: CGBitmapInfo, alpha: CGImageAlphaInfo) throws -> CGImage {
         guard let provider = CGDataProvider(data: Data(bytes) as CFData),
               let space = CGColorSpace(name: CGColorSpace.sRGB),
@@ -719,7 +860,7 @@ struct SettingsCaptureScopeTests {
             for (cropOrdinal, crop) in crops.enumerated() {
                 guard let part = image.cropping(to: crop) else { throw Failure(description: "grid_oracle_crop_failed") }
                 try verifyGrid(part, crop: crop, width: width, height: height,
-                               scaleOrdinal: scaleOrdinal, cropOrdinal: cropOrdinal)
+                               backingScale: scale, cropOrdinal: cropOrdinal)
             }
             // Counterevidence: the same checker must reject a known incorrect two-pixel border.
             // The interior crop's corners distinguish it from the required one-pixel border.
@@ -730,10 +871,10 @@ struct SettingsCaptureScopeTests {
             }
             var rejectedWrongBorder = false
             do { try verifyGrid(part, crop: crops[5], width: width, height: height,
-                               scaleOrdinal: scaleOrdinal, cropOrdinal: 5) }
+                               backingScale: scale, cropOrdinal: 5) }
             catch is Failure { rejectedWrongBorder = true }
             try expect(rejectedWrongBorder, "grid_oracle_wrong_border_accepted")
-            if report { print("PASS GRID-ORACLE scale=\(scaleOrdinal) fixture=\(padded ? "inner_grid_padding16" : "window_edge_grid") crops=6 samples=48 wrongBorderRejected=1 offscreenOnly=1 originalFailureResolvedByThisCell=0") }
+            if report { print("PASS GRID-ORACLE scaleOrdinal=\(scaleOrdinal) backingScaleClass=\(BackingScaleClass(scale).rawValue) fixture=\(padded ? "inner_grid_padding16" : "window_edge_grid") crops=6 samples=48 wrongBorderRejected=1 offscreenOnly=1 originalFailureResolvedByThisCell=0") }
         }
     }
 
@@ -779,22 +920,84 @@ struct SettingsCaptureScopeTests {
         return image
     }
 
-    static func pixelMatches(_ image: CGImage, x: Int, y: Int, expected: [Int]) -> Bool {
-        guard let bytes = renderedPixel(image, x: x, y: y) else { return false }
-        return zip(bytes, expected).allSatisfy { abs(Int($0.0) - $0.1) <= 8 }
+    enum PixelNormalizationStage: String {
+        case drawReturned = "draw_returned"
+        case invalidCoordinates = "invalid_coordinates"
+        case cropUnavailable = "crop_unavailable"
+        case colorSpaceUnavailable = "color_space_unavailable"
+        case contextUnavailable = "context_unavailable"
     }
 
-    /// Ephemeral test pixels only. Callers may emit fixed predicates/classifications, never bytes.
-    static func renderedPixel(_ image: CGImage, x: Int, y: Int) -> [UInt8]? {
-        guard let pixel = image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)),
-              let space = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        var bytes: [UInt8] = [0, 0, 0, 0]
-        let rendered = bytes.withUnsafeMutableBytes { memory -> Bool in
-            guard let context = CGContext(data: memory.baseAddress, width: 1, height: 1, bitsPerComponent: 8,
-                bytesPerRow: 4, space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
-            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1)); return true
+    enum NormalizedAlpha: String {
+        case unavailable, zero, partial, mixed, opaque
+        var opaqueCode: Int { self == .unavailable ? -1 : self == .opaque ? 1 : 0 }
+        var zeroCode: Int { self == .unavailable ? -1 : self == .zero ? 1 : 0 }
+    }
+
+    struct PixelObservation {
+        let stage: PixelNormalizationStage
+        // Ephemeral normalized test bytes. Diagnostics may emit only classifications below.
+        let bytes: [UInt8]?
+        var available: Bool { stage == .drawReturned && bytes?.count == 4 }
+        var alpha: NormalizedAlpha {
+            guard available, let bytes else { return .unavailable }
+            return bytes[3] == 0 ? .zero : bytes[3] == 255 ? .opaque : .partial
         }
-        return rendered ? bytes : nil
+        func rgbMatches(_ expected: [Int]) -> Bool {
+            guard available, let bytes, expected.count == 4 else { return false }
+            return (0..<3).allSatisfy { abs(Int(bytes[$0]) - expected[$0]) <= 8 }
+        }
+        func matchesOpaqueFixture(_ expected: [Int]) -> Bool {
+            expected.count == 4 && expected[3] == 255 && alpha == .opaque && rgbMatches(expected)
+        }
+    }
+
+    enum BackingScaleClass: String {
+        case oneX = "one_x", twoX = "two_x", other
+        init(_ scale: CGFloat) { self = scale == 1 ? .oneX : scale == 2 ? .twoX : .other }
+        var ordinal: Int { self == .oneX ? 0 : self == .twoX ? 1 : 2 }
+    }
+
+    /// Fixed unit labels avoid confusing ordinal 1 with a physical 1x display. Unknown or
+    /// nonrepresentable half-point sizes are marked -1, never rounded into known metadata.
+    static func halfPointUnits(_ points: CGFloat) -> Int {
+        let units = points * 2
+        guard units.isFinite, units >= 0, units < CGFloat(Int.max), units.rounded() == units else { return -1 }
+        return Int(units)
+    }
+
+    static func pixelMatches(_ image: CGImage, x: Int, y: Int, expected: [Int]) -> Bool {
+        observePixel(image, x: x, y: y).matchesOpaqueFixture(expected)
+    }
+
+    /// The actual crop/context boundaries are independently replaceable only in this test file.
+    /// A failed read never becomes alpha zero, a palette class, or an accepted fixture sample.
+    static func observePixel(_ image: CGImage, x: Int, y: Int,
+        cropper: (CGImage, CGRect) -> CGImage? = { $0.cropping(to: $1) },
+        colorSpaceFactory: () -> CGColorSpace? = { CGColorSpace(name: CGColorSpace.sRGB) },
+        contextFactory: (UnsafeMutableRawPointer?, CGColorSpace) -> CGContext? = { pointer, space in
+            CGContext(data: pointer, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+        }) -> PixelObservation {
+        guard x >= 0, y >= 0, x < image.width, y < image.height else {
+            return .init(stage: .invalidCoordinates, bytes: nil)
+        }
+        guard let pixel = cropper(image, CGRect(x: x, y: y, width: 1, height: 1)) else {
+            return .init(stage: .cropUnavailable, bytes: nil)
+        }
+        guard let space = colorSpaceFactory() else { return .init(stage: .colorSpaceUnavailable, bytes: nil) }
+        var bytes: [UInt8] = [0, 0, 0, 0]
+        let returned = bytes.withUnsafeMutableBytes { memory -> Bool in
+            guard let context = contextFactory(memory.baseAddress, space) else { return false }
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true // The API returned; it does not report whether a source provider decoded.
+        }
+        return returned ? .init(stage: .drawReturned, bytes: bytes) : .init(stage: .contextUnavailable, bytes: nil)
+    }
+
+    /// Compatibility for alpha controls only; fixture acceptance always uses PixelObservation.
+    static func renderedPixel(_ image: CGImage, x: Int, y: Int) -> [UInt8]? {
+        observePixel(image, x: x, y: y).bytes
     }
 
     static func matchesFixtureColor(_ image: CGImage) -> Bool {
@@ -813,7 +1016,7 @@ struct SettingsCaptureScopeTests {
             let redMatches = abs(Int(pixels[offset]) - 51) <= 8
             let greenMatches = abs(Int(pixels[offset + 1]) - 179) <= 8
             let blueMatches = abs(Int(pixels[offset + 2]) - 77) <= 8
-            guard redMatches && greenMatches && blueMatches && pixels[offset + 3] >= 250 else { return false }
+            guard redMatches && greenMatches && blueMatches && pixels[offset + 3] == 255 else { return false }
         }
         return true
     }
