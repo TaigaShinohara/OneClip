@@ -40,7 +40,17 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
     private var decisionState = CollectionDecisionState()
     private var decisionCompletion: (@MainActor (Bool) -> Void)?
 
+    /// Same product content, without a window or external interaction; used by ownership tests.
+    static func makeDiagnosticContent(coordinator: CollectionCaptureCoordinator,
+                                      interface: NativeCaptureInterface) -> NSView {
+        NSHostingView(rootView: CollectionPanelView(coordinator: coordinator, interface: interface))
+    }
+    var diagnosticPresentationIsVisible: Bool { window?.isVisible == true }
+    var diagnosticHasContent: Bool { window?.contentView != nil }
+    func diagnosticDisplayIfNeeded() { window?.displayIfNeeded() }
+
     func show(coordinator: CollectionCaptureCoordinator, interface: NativeCaptureInterface, activate: Bool) {
+        coordinator.securityTrace.record(.viewShown, mode: .collection)
         self.coordinator = coordinator; self.interface = interface
         if window == nil {
             let available = NSScreen.main?.visibleFrame.size ?? NSSize(width: 900, height: 700)
@@ -65,6 +75,7 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
     }
 
     func hide() {
+        coordinator?.securityTrace.record(.viewHidden, mode: .collection)
         decisionState.invalidate()
         let completion = decisionCompletion; decisionCompletion = nil
         if let sheet {
@@ -158,7 +169,7 @@ final class CollectionPanelController: NSObject, NSWindowDelegate {
         sheet.isRestorable = false; sheet.isReleasedWhenClosed = false
         sheet.contentView = NSHostingView(rootView: CollectionConfirmationView(
             title: title, message: message, keepTitle: keepTitle, deleteTitle: deleteTitle,
-            image: image, imageLabel: imageLabel,
+            image: image, imageLabel: imageLabel, securityTrace: coordinator?.securityTrace ?? .disabled,
             onKeep: { [weak self] in self?.answer(false, decision: decision) },
             onDelete: { [weak self] in self?.answer(true, decision: decision) }))
         if let content = sheet.contentView { sheet.setContentSize(content.fittingSize) }
@@ -200,6 +211,7 @@ struct CollectionConfirmationView: View {
     let deleteTitle: String
     var image: CGImage? = nil
     var imageLabel: String = ""
+    var securityTrace: CaptureSecurityTrace = .disabled
     let onKeep: () -> Void
     let onDelete: () -> Void
 
@@ -207,7 +219,7 @@ struct CollectionConfirmationView: View {
         VStack(alignment: .leading, spacing: 22) {
             OneClipHeading(title: title, systemName: "trash", tone: .warning)
             if let image {
-                CollectionSourceImage(image: image)
+                CollectionSourceImage(image: image, securityTrace: securityTrace)
                     .frame(height: 130)
                     .accessibilityLabel(imageLabel)
             }
@@ -383,7 +395,7 @@ struct CollectionPanelView: View {
                         .frame(width: 26, height: 26)
                         .background(OneClipTone.collection.color(for: colorScheme).opacity(0.10), in: Circle())
                         .accessibilityHidden(true)
-                    CollectionSourceImage(image: item.image)
+                    CollectionSourceImage(image: item.image, securityTrace: coordinator.securityTrace)
                         .frame(width: 72, height: 58)
                         .accessibilityLabel("素材\(item.index + 1)の小画像")
                     VStack(alignment: .leading, spacing: 4) {
@@ -513,7 +525,7 @@ struct CollectionPanelView: View {
                             .pickerStyle(.segmented).labelsHidden().frame(width: 140)
                             .focused($focusedAction, equals: "comparison-zoom")
                             CollectionSourcePreview(image: image, actualPixels: coordinator.replacementActualPixels,
-                                                    actions: replacementActions)
+                                                    actions: replacementActions, securityTrace: coordinator.securityTrace)
                                 .frame(height: 230)
                                 .focusable(coordinator.replacementActualPixels)
                                 .focused($focusedAction, equals: "comparison-preview")
@@ -613,6 +625,7 @@ struct CollectionPanelView: View {
 /// A small view of an existing immutable source. It never allocates a thumbnail raster or PNG.
 private struct CollectionSourceImage: NSViewRepresentable {
     let image: CGImage
+    var securityTrace: CaptureSecurityTrace = .disabled
 
     func makeNSView(context: Context) -> CollectionSourceImageView {
         let view = CollectionSourceImageView()
@@ -622,6 +635,7 @@ private struct CollectionSourceImage: NSViewRepresentable {
     }
 
     func updateNSView(_ view: CollectionSourceImageView, context: Context) {
+        view.securityTrace = securityTrace
         view.image = image
         view.needsDisplay = true
     }
@@ -631,11 +645,13 @@ private struct CollectionSourceImage: NSViewRepresentable {
 
 private final class CollectionSourceImageView: NSView {
     var image: CGImage?
+    var securityTrace: CaptureSecurityTrace = .disabled
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.controlBackgroundColor.setFill()
         NSBezierPath(rect: bounds).fill()
         guard let image, let context = NSGraphicsContext.current?.cgContext else { return }
+        securityTrace.record(.viewDraw, mode: .collection)
         let zoom = min(bounds.width / CGFloat(image.width), bounds.height / CGFloat(image.height))
         let size = CGSize(width: CGFloat(image.width) * zoom, height: CGFloat(image.height) * zoom)
         let rect = CGRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
@@ -654,6 +670,7 @@ private struct CollectionSourcePreview: NSViewRepresentable {
     let image: CGImage
     let actualPixels: Bool
     let actions: CollectionPreviewActions
+    var securityTrace: CaptureSecurityTrace = .disabled
     func makeCoordinator() -> CollectionPreviewActions { actions }
     func makeNSView(context: Context) -> CollectionScrollView {
         let scroll = CollectionScrollView()
@@ -665,6 +682,7 @@ private struct CollectionSourcePreview: NSViewRepresentable {
     }
     func updateNSView(_ scroll: CollectionScrollView, context: Context) {
         guard let canvas = scroll.documentView as? CollectionSourcePixelCanvas else { return }
+        canvas.securityTrace = securityTrace
         canvas.image = image; canvas.actualPixels = actualPixels
         scroll.setActualPixels(actualPixels)
         scroll.needsLayout = true; scroll.layoutSubtreeIfNeeded()
@@ -678,6 +696,7 @@ private struct CollectionSourcePreview: NSViewRepresentable {
 
 private final class CollectionSourcePixelCanvas: NSView {
     var image: CGImage?
+    var securityTrace: CaptureSecurityTrace = .disabled
     var actualPixels = false
     var fitSize = NSSize(width: 380, height: 230)
     private var zoom: CGFloat = 1
@@ -695,6 +714,7 @@ private final class CollectionSourcePixelCanvas: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let image, let context = NSGraphicsContext.current?.cgContext else { return }
+        securityTrace.record(.viewDraw, mode: .collection)
         NSColor.controlBackgroundColor.setFill(); bounds.fill()
         context.saveGState(); defer { context.restoreGState() }
         context.interpolationQuality = actualPixels ? .none : .high
@@ -755,6 +775,7 @@ private final class CollectionCanvas: NSView {
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let coordinator, let plan = coordinator.plan, let context = NSGraphicsContext.current?.cgContext else { return }
+        coordinator.securityTrace.record(.viewDraw, mode: .collection)
         context.saveGState(); defer { context.restoreGState() }
         context.translateBy(x: max(0, (bounds.width - CGFloat(plan.width) * zoom) / 2),
                             y: max(0, (bounds.height - CGFloat(plan.height) * zoom) / 2))

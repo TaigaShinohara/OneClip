@@ -31,7 +31,11 @@ struct CaptureAnnotationsTests {
         print("PASS ANNOTATION-05 cancellation at rendering boundaries does not mutate the source")
         try testLoad(image, root: root)
         print("PASS ANNOTATION-06 PNG load validates metadata, regular files and source boundaries")
-        print("PASS 6 annotation renderer groups; synthetic images and temporary files only")
+        try testEncodedBudget(image)
+        print("PASS ANNOTATION-07 encoded snapshot and bridge stores are included before decode")
+        try testIndependentDecodedImage(image)
+        print("PASS ANNOTATION-08 normalized RGBA output releases its encoded Data allocation")
+        print("PASS 8 annotation renderer groups; synthetic images and temporary files only")
     }
 
     static func expect(_ value: @autoclosure () -> Bool, _ message: String) throws {
@@ -155,6 +159,7 @@ struct CaptureAnnotationsTests {
         let encoded = try M0ImageComposer.compose(assets: [M0ImageAsset(image: image)]).pngData
         let original = root.appendingPathComponent("original.png")
         try encoded.write(to: original)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: original.path)
         let loaded = try CaptureAnnotationRenderer.load(from: original)
         try expect(loaded.image.width == image.width && loaded.image.height == image.height, "Loading changed image dimensions")
         let loadedBytes = try bytes(loaded.image), sourceBytes = try bytes(image)
@@ -171,5 +176,41 @@ struct CaptureAnnotationsTests {
         try expectError { _ = try CaptureAnnotationRenderer.load(from: URL(string: "https://example.invalid/test.png")!) }
         let unchanged = try Data(contentsOf: original)
         try expect(unchanged == encoded, "Load checks modified the saved original")
+    }
+
+    static func testEncodedBudget(_ image: CGImage) throws {
+        let png = try M0ImageComposer.compose(assets: [M0ImageAsset(image: image)]).pngData
+        var limits = M0ImageLimits()
+        limits.maximumImageBytes = png.count * 2 - 1
+        try expectError { _ = try CaptureAnnotationRenderer.load(png: png, limits: limits) }
+        limits.maximumImageBytes = png.count * 2
+        try expectError { _ = try CaptureAnnotationRenderer.load(png: png, limits: limits) }
+        try expectError { _ = try CaptureAnnotationRenderer.load(png: png, retainingExtraBytes: Int.max) }
+        try expectError { _ = try CaptureAnnotationRenderer.load(png: png, retainingExtraBytes: -1) }
+        let loaded = try CaptureAnnotationRenderer.load(png: png)
+        try expect(loaded.image.width == image.width && loaded.image.height == image.height,
+                   "Fresh finite PNG budget did not recover loading")
+    }
+
+    final class InputLifetime: @unchecked Sendable {
+        private let lock = NSLock()
+        private var released = false
+        var isReleased: Bool { lock.lock(); defer { lock.unlock() }; return released }
+        func finish() { lock.lock(); released = true; lock.unlock() }
+    }
+
+    static func testIndependentDecodedImage(_ image: CGImage) throws {
+        let encoded = try M0ImageComposer.compose(assets: [M0ImageAsset(image: image)]).pngData
+        let lifetime = InputLifetime()
+        let memory = UnsafeMutableRawPointer.allocate(byteCount: encoded.count, alignment: 16)
+        encoded.copyBytes(to: memory.assumingMemoryBound(to: UInt8.self), count: encoded.count)
+        var input: Data? = Data(bytesNoCopy: memory, count: encoded.count, deallocator: .custom { bytes, _ in
+            bytes.deallocate(); lifetime.finish()
+        })
+        let loaded = try CaptureAnnotationRenderer.load(png: input!)
+        input = nil
+        try expect(lifetime.isReleased, "Normalized image retained its compressed PNG allocation")
+        let actual = try bytes(loaded.image), expected = try bytes(image)
+        try expect(actual == expected, "Independent normalization changed source pixels")
     }
 }

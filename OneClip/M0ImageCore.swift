@@ -246,11 +246,14 @@ enum M0ImageComposer {
     /// Sources remain borrowed until that completion, including during synchronous framework work.
     static func composeCancellable(assets: [M0ImageAsset], limits: M0ImageLimits = .init(),
                                    retainingExtraBytes: Int = 0,
+                                   securityTrace: CaptureSecurityTrace = .disabled,
+                                   mode: CaptureSecurityTrace.Mode = .none,
                                    checkCancellation: @escaping @Sendable (M0CompositionCheckpoint) throws -> Void = { _ in })
         async throws -> M0CompositionResult {
         try Task.checkCancellation()
         let worker = Task.detached(priority: .userInitiated) {
             try compose(assets: assets, limits: limits, retainingExtraBytes: retainingExtraBytes,
+                        securityTrace: securityTrace, mode: mode,
                         checkCancellation: { checkpoint in
                             try Task.checkCancellation()
                             try checkCancellation(checkpoint)
@@ -260,6 +263,7 @@ enum M0ImageComposer {
         let result = try await withTaskCancellationHandler {
             try await worker.value
         } onCancel: {
+            securityTrace.record(.cancellationRequested, mode: mode, phase: .encoding)
             worker.cancel()
         }
         try Task.checkCancellation()
@@ -268,9 +272,25 @@ enum M0ImageComposer {
 
     static func compose(assets: [M0ImageAsset], limits: M0ImageLimits = .init(),
                         retainingExtraBytes: Int = 0,
-                        checkCancellation: @Sendable (M0CompositionCheckpoint) throws -> Void = { _ in try Task.checkCancellation() })
+                        securityTrace: CaptureSecurityTrace = .disabled,
+                        mode: CaptureSecurityTrace.Mode = .none,
+                        checkCancellation: @escaping @Sendable (M0CompositionCheckpoint) throws -> Void = { _ in try Task.checkCancellation() })
         throws -> M0CompositionResult {
-        try checkCancellation(.beforeAllocation)
+        securityTrace.record(.compositionStarted, mode: mode, phase: .encoding)
+        defer { securityTrace.record(.compositionFinished, mode: mode, phase: .encoding) }
+        let checked: @Sendable (M0CompositionCheckpoint) throws -> Void = { checkpoint in
+            let code: CaptureSecurityTrace.Code
+            switch checkpoint {
+            case .beforeAllocation: code = .allocationCheckpoint
+            case .beforeSource: code = .sourceCheckpoint
+            case .beforeEncoding: code = .beforeEncoding
+            case .afterEncoding: code = .afterEncoding
+            case .beforeResult: code = .beforeResult
+            }
+            securityTrace.record(code, mode: mode, phase: .encoding)
+            try checkCancellation(checkpoint)
+        }
+        try checked(.beforeAllocation)
         // Drain temporary Objective-C/bridging objects before handing the retained result to callers.
         // ImageIO's private allocations and allocator retention are not a process-memory guarantee.
         let result = try autoreleasepool {
@@ -279,9 +299,9 @@ enum M0ImageComposer {
             if assets.count == 1 {
                 image = assets[0].image
             } else {
-                image = try render(assets: assets, plan: plan, checkCancellation: checkCancellation)
+                image = try render(assets: assets, plan: plan, checkCancellation: checked)
             }
-            try checkCancellation(.beforeEncoding)
+            try checked(.beforeEncoding)
             let buffer = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(buffer as CFMutableData,
                                                                    UTType.png.identifier as CFString, 1, nil) else {
@@ -289,7 +309,7 @@ enum M0ImageComposer {
             }
             CGImageDestinationAddImage(destination, image, nil)
             let encoded = CGImageDestinationFinalize(destination)
-            try checkCancellation(.afterEncoding)
+            try checked(.afterEncoding)
             guard encoded else { throw M0ImageError.encodingFailed }
             // Check the actual encoded length, including a second PNG store, before copying it.
             let retainedBytes = try validateEncodedBytes(plan: plan, pngByteCount: buffer.length,
@@ -299,7 +319,7 @@ enum M0ImageComposer {
             return M0CompositionResult(image: image, pngData: pngData, plan: plan, actualImageBytes: retainedBytes)
         }
         // Includes cancellation during the immutable Data copy or autorelease-pool cleanup.
-        try checkCancellation(.beforeResult)
+        try checked(.beforeResult)
         return result
     }
 

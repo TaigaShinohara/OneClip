@@ -88,6 +88,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
     }()
 
     var onCaptureResult: (@MainActor (Data, Bool, UUID) -> Void)?
+    var externalRetainedBytes: @MainActor () throws -> Int = { 0 }
 
     @Published private(set) var phase = CollectionCapturePhase.idle
     @Published private(set) var assets: [M0ImageAsset] = []
@@ -124,6 +125,13 @@ final class CollectionCaptureCoordinator: ObservableObject {
             total = sum.partialValue
         }
         return total
+    }
+    private func additionalRetainedImageBytes() throws -> Int {
+        let external = try externalRetainedBytes()
+        guard external >= 0 else { throw M0ImageError.invalidMetrics }
+        let total = retiredImageBytes.addingReportingOverflow(external)
+        guard !total.overflow else { throw M0ImageError.arithmeticOverflow }
+        return total.partialValue
     }
     private func trackRetiringImage(_ image: CGImage) {
         retiredImageBorrows.removeAll { $0.image == nil }
@@ -163,46 +171,22 @@ final class CollectionCaptureCoordinator: ObservableObject {
     var plan: M0CompositionPlan? { try? M0ImageComposer.makePlan(assets: assets, limits: limits) }
     /// Checked aggregate source/UI estimate. This is not a process RSS promise.
     var retainedImageBytes: Int {
-        var total = retiredImageBytes
-        for asset in assets {
-            let bytes = asset.image.bytesPerRow.multipliedReportingOverflow(by: asset.image.height)
-            let sum = total.addingReportingOverflow(bytes.partialValue)
-            guard !bytes.overflow, !sum.overflow else { return Int.max }
-            total = sum.partialValue
-        }
-        if let plan {
-            let sum = total.addingReportingOverflow(plan.previewReserveBytes)
-            guard !sum.overflow else { return Int.max }; total = sum.partialValue
-        }
-        return total
+        do {
+            let owned = try Self.ownerBytes(sources: assets, candidate: pendingReplacement?.candidate,
+                                            completed: completed, previewBytes: plan?.previewReserveBytes ?? 0)
+            return try CaptureRetainedImageBudget.sum(retiredImageBytes, max(owned, workerImageBytes))
+        } catch { return Int.max }
     }
-    /// Includes completed outputs and comparison candidates owned outside the source set.
-    /// Annotation editing keeps those owners alive, unlike a new single capture.
-    var annotationRetainedImageBytes: Int {
-        var total = retainedImageBytes
-        var seen = Set(assets.map { ObjectIdentifier($0.image) })
-        for borrow in retiredImageBorrows {
-            if let image = borrow.image { seen.insert(ObjectIdentifier(image)) }
-        }
-        func addBytes(_ bytes: Int) -> Bool {
-            let sum = total.addingReportingOverflow(bytes)
-            guard bytes >= 0, !sum.overflow else { return false }
-            total = sum.partialValue
-            return true
-        }
-        func addImage(_ image: CGImage) -> Bool {
-            guard seen.insert(ObjectIdentifier(image)).inserted else { return true }
-            let bytes = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
-            return !bytes.overflow && addBytes(bytes.partialValue)
-        }
-        if let completed {
-            guard addImage(completed.image), addBytes(completed.pngData.count) else { return Int.max }
-        }
-        if let candidate = pendingReplacement?.candidate {
-            guard addImage(candidate.image) else { return Int.max }
-        }
-        return total
+    private static func ownerBytes(sources: [M0ImageAsset], candidate: M0ImageAsset? = nil,
+                                   completed: M0CompositionResult? = nil, previewBytes: Int) throws -> Int {
+        var images = sources.map(\.image)
+        if let candidate { images.append(candidate.image) }
+        if let completed { images.append(completed.image) }
+        return try CaptureRetainedImageBudget.sum(CaptureRetainedImageBudget.images(images),
+                                                  completed?.pngData.count ?? 0, previewBytes)
     }
+    /// All consumers now use the same complete owner snapshot.
+    var annotationRetainedImageBytes: Int { retainedImageBytes }
 
     func prepareForSingleCapture() -> Bool {
         guard canStartSingle else { return false }
@@ -223,6 +207,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
     private let clipboard: any CaptureClipboardWriting
     private let workSlot: CaptureWorkerSlot
     private let preferences: CapturePreferences
+    let securityTrace: CaptureSecurityTrace
     private let limits: M0ImageLimits
     private let permissionCheck: @MainActor () -> Bool
     private let permissionRequest: @MainActor () -> Bool
@@ -230,6 +215,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
     private let displayAtPointer: @MainActor () throws -> CaptureDisplaySnapshot
     private let compose: @Sendable ([M0ImageAsset], M0ImageLimits) async throws -> M0CompositionResult
     private var worker: Task<Void, Never>?
+    private var workerImageBytes = 0
     private var selectionDisplay: CaptureDisplaySnapshot?
     private var isStopping = false
     private var hasAdoptedSource = false
@@ -242,6 +228,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
          clipboard: any CaptureClipboardWriting = GeneralCaptureClipboard(),
          workSlot: CaptureWorkerSlot = .shared, preferences: CapturePreferences = .shared,
          limits: M0ImageLimits = .init(),
+         securityTrace: CaptureSecurityTrace = .disabled,
          permissionCheck: @escaping @MainActor () -> Bool = { CGPreflightScreenCaptureAccess() },
          permissionRequest: @escaping @MainActor () -> Bool = { CGRequestScreenCaptureAccess() },
          protectedDataCheck: @escaping @MainActor () -> Bool = { NSApp.isProtectedDataAvailable },
@@ -251,14 +238,16 @@ final class CollectionCaptureCoordinator: ObservableObject {
              }
              return try ScreenshotService.snapshot(for: screen)
          },
-         compose: @escaping @Sendable ([M0ImageAsset], M0ImageLimits) async throws -> M0CompositionResult = { assets, limits in
-             try await M0ImageComposer.composeCancellable(assets: assets, limits: limits)
-         }) {
+         compose: (@Sendable ([M0ImageAsset], M0ImageLimits) async throws -> M0CompositionResult)? = nil) {
         self.capturer = capturer; self.interface = interface; self.clipboard = clipboard
         self.workSlot = workSlot; self.preferences = preferences; self.limits = limits
         self.permissionCheck = permissionCheck; self.permissionRequest = permissionRequest
         self.protectedDataCheck = protectedDataCheck; self.displayAtPointer = displayAtPointer
-        self.compose = compose
+        self.securityTrace = securityTrace
+        self.compose = compose ?? { assets, limits in
+            try await M0ImageComposer.composeCancellable(assets: assets, limits: limits,
+                                                       securityTrace: securityTrace, mode: .collection)
+        }
     }
 
     /// Explicit addition differs from the next independent collection after a successful copy.
@@ -360,6 +349,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
             revision = UUID()
             let token = revision
             phase = .selecting
+            securityTrace.record(.operationStarted, mode: .collection, phase: .selecting)
             statusText = index.map { "素材\($0 + 1)を取り直す範囲を選択・Escで旧素材を保持" } ?? "追加する範囲を選択・Escで取消"
             interface.hideCollection()
             interface.showSelection(on: display, selected: { [weak self] selection in
@@ -409,24 +399,31 @@ final class CollectionCaptureCoordinator: ObservableObject {
             let (stride, overflow) = geometry.pixelWidth.multipliedReportingOverflow(by: 4)
             guard !overflow else { throw M0ImageError.arithmeticOverflow }
             let budget = CaptureImageBudgetContext(existing: assets.map(\.metrics), replacementIndex: replacementIndex,
-                                                   retainingExtraBytes: retiredImageBytes)
-            _ = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
+                                                   retainingExtraBytes: try additionalRetainedImageBytes())
+            let admitted = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
                                                             bytesPerRow: stride, scale: Double(selection.display.scale)), limits: limits)
             let settings = try interface.settingsCaptureScope(for: selection)
             guard interface.hideCollectionSelection() else { fail("選択画面を閉じられず、取得を中止しました"); return }
             let identifier = UUID()
-            guard workSlot.acquire(identifier) else { fail("前の処理が終わるまで待ってください"); return }
+            guard workSlot.acquire(identifier, securityTrace: securityTrace, mode: .collection) else { fail("前の処理が終わるまで待ってください"); return }
             #if DEBUG
-            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings, practice: selectedPractice)
+            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings, practice: selectedPractice,
+                                               securityTrace: securityTrace, traceMode: .collection)
             #else
-            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings)
+            let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings,
+                                               securityTrace: securityTrace, traceMode: .collection)
             #endif
             let session = sessionID
             let target = replacementIndex
+            workerImageBytes = admitted.estimatedPeakBytes - budget.retainingExtraBytes
             phase = .capturing; isWorking = true
             statusText = "画像を取得しています…"
-            worker = Task { [weak self, workSlot] in
-                defer { workSlot.release(identifier) }
+            worker = Task { [weak self, workSlot, securityTrace] in
+                securityTrace.record(.workerStarted, mode: .collection, phase: .capturing)
+                defer {
+                    securityTrace.record(.workerReturned, mode: .collection, phase: .capturing)
+                    workSlot.release(identifier, securityTrace: securityTrace, mode: .collection)
+                }
                 guard let self else { return }
                 defer { self.finishWorker(identifier) }
                 do {
@@ -436,7 +433,10 @@ final class CollectionCaptureCoordinator: ObservableObject {
                     })
                     guard self.isCurrent(session: session, token: token), !Task.isCancelled else { return }
                     if let settings = request.settings, !settings.validate() { throw ScreenshotError.settingsUnavailable }
-                    _ = try budget.validateCandidate(candidate.metrics, limits: self.limits)
+                    let freshBudget = CaptureImageBudgetContext(existing: self.assets.map(\.metrics),
+                        replacementIndex: target, retainingExtraBytes: try self.additionalRetainedImageBytes())
+                    let adopted = try freshBudget.validateCandidate(candidate.metrics, limits: self.limits)
+                    self.workerImageBytes = adopted.estimatedPeakBytes - freshBudget.retainingExtraBytes
                     if let target, let session, self.assets.indices.contains(target) {
                         self.pendingReplacement = CollectionReplacement(sessionID: session,
                             contentRevision: self.contentRevision, assetID: self.assetIDs[target], index: target,
@@ -450,6 +450,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
                         self.statusText = "素材を追加しました。完成画像を確認してコピーできます"
                     }
                     self.hasAdoptedSource = true
+                    securityTrace.record(.resultAdopted, mode: .collection, phase: .capturing)
                     self.revision = UUID(); self.replacementIndex = nil; self.selectionDisplay = nil
                     self.interface.showCollection(activate: self.interface.isOneClipActive)
                 } catch {
@@ -541,22 +542,41 @@ final class CollectionCaptureCoordinator: ObservableObject {
         guard permissionCheck(), protectedDataCheck() else { invalidate(message: "利用状態が変わったため素材を破棄しました"); return }
         interface.rememberCollectionOrigin()
         let identifier = UUID()
-        guard workSlot.acquire(identifier) else { return }
+        guard workSlot.acquire(identifier, securityTrace: securityTrace, mode: .collection) else { return }
         let token = revision
         let content = contentRevision
-        let extra = retiredImageBytes
+        let extra: Int
+        do { extra = try additionalRetainedImageBytes() }
+        catch {
+            fail("画像の作業領域の解放を待ってから、もう一度コピーしてください")
+            workSlot.release(identifier, securityTrace: securityTrace, mode: .collection)
+            return
+        }
         var compositionLimits = limits
         guard extra >= 0, extra < limits.maximumImageBytes else {
-            fail("画像の作業領域の解放を待ってから、もう一度コピーしてください"); workSlot.release(identifier); return
+            fail("画像の作業領域の解放を待ってから、もう一度コピーしてください"); workSlot.release(identifier, securityTrace: securityTrace, mode: .collection); return
         }
         compositionLimits.maximumImageBytes -= extra
         let sources = assets // Immutable aliases, not duplicated image buffers.
         let cached = completed
+        do {
+            let admitted = try M0ImageComposer.makePlan(assets: sources, limits: limits, retainingExtraBytes: extra)
+            workerImageBytes = cached == nil ? admitted.estimatedPeakBytes - extra
+                : try Self.ownerBytes(sources: sources, completed: cached, previewBytes: admitted.previewReserveBytes)
+        } catch {
+            fail("画像の作業領域の解放を待ってから、もう一度コピーしてください")
+            workSlot.release(identifier, securityTrace: securityTrace, mode: .collection)
+            return
+        }
         completed = nil
         let expectedCount = clipboard.changeCount
         isWorking = true; phase = .encoding; statusText = "完成画像を準備しています…"
-        worker = Task { [weak self, workSlot] in
-            defer { workSlot.release(identifier) }
+        worker = Task { [weak self, workSlot, securityTrace] in
+            securityTrace.record(.workerStarted, mode: .collection, phase: .encoding)
+            defer {
+                securityTrace.record(.workerReturned, mode: .collection, phase: .encoding)
+                workSlot.release(identifier, securityTrace: securityTrace, mode: .collection)
+            }
             guard let self else { return }
             defer { self.finishWorker(identifier) }
             do {
@@ -567,10 +587,14 @@ final class CollectionCaptureCoordinator: ObservableObject {
                     _ = try M0ImageComposer.makePlan(assets: sources, limits: self.limits, retainingExtraBytes: extra)
                     result = try await self.compose(sources, compositionLimits)
                 }
+                self.workerImageBytes = (try? Self.ownerBytes(sources: sources, completed: result,
+                    previewBytes: result.plan.previewReserveBytes)) ?? Int.max
                 guard self.isCurrent(session: session, token: token), !Task.isCancelled else { return }
-                let checkedPlan = try M0ImageComposer.makePlan(assets: sources, limits: self.limits, retainingExtraBytes: extra)
+                let checkedExtra = max(extra, try self.additionalRetainedImageBytes())
+                let checkedPlan = try M0ImageComposer.makePlan(assets: sources, limits: self.limits, retainingExtraBytes: checkedExtra)
                 _ = try M0ImageComposer.validateEncodedBytes(plan: checkedPlan, pngByteCount: result.pngData.count, isSingleImage: sources.count == 1, limits: self.limits)
                 self.completed = result
+                securityTrace.record(.resultAdopted, mode: .collection, phase: .encoding)
                 if !write {
                     self.phase = .ready; self.statusText = "完成画像を確認できます"
                     return
@@ -578,7 +602,10 @@ final class CollectionCaptureCoordinator: ObservableObject {
                 // Last fence, no await before synchronous write.
                 guard self.isCurrent(session: session, token: token) else { return }
                 self.phase = .writing
-                let outcome = self.clipboard.writePNG(result.pngData, expectedChangeCount: expectedCount)
+                let outcome = self.clipboard.writePNG(result.pngData, expectedChangeCount: expectedCount,
+                                                      securityTrace: securityTrace, mode: .collection)
+                securityTrace.record(.clipboardOutcome, mode: .collection, phase: .writing,
+                                     outcome: outcome.writeAccepted ? .accepted : .rejected)
                 if outcome.writeAccepted {
                     self.copiedContentRevision = content
                     self.completed = nil
@@ -623,12 +650,16 @@ final class CollectionCaptureCoordinator: ObservableObject {
 
     func discard() {
         guard canEndSession else { return }
-        worker?.cancel(); releaseSession(); interface.hideCollection(); interface.dismissCollectionUI()
+        if worker != nil { securityTrace.record(.cancellationRequested, mode: .collection) }
+        worker?.cancel(); releaseSession()
+        securityTrace.record(.operationInvalidated, mode: .collection)
+        interface.hideCollection(); interface.dismissCollectionUI()
         statusText = "まとめ撮りの編集を終了しました。クリップボードは変更していません"
         if interface.isOneClipActive { interface.returnToCollectionOrigin() }
     }
 
     func invalidate(message: String) {
+        let oldPhase = CaptureSecurityTrace.Phase(rawValue: phase.rawValue) ?? .none
         let count = assets.count
         let hadCandidate = pendingReplacement != nil
         if count > 0 {
@@ -637,7 +668,10 @@ final class CollectionCaptureCoordinator: ObservableObject {
             invalidationNotice = "前のまとめ\(count)枚を破棄しました。\(message) \(copyState)"
                 + (hadCandidate ? "取り直し候補も破棄しました。" : "")
         }
-        worker?.cancel(); releaseSession(); interface.hideCollection(); interface.dismissCollectionUI()
+        if worker != nil { securityTrace.record(.cancellationRequested, mode: .collection) }
+        worker?.cancel(); releaseSession()
+        securityTrace.record(.operationInvalidated, mode: .collection, phase: oldPhase)
+        interface.hideCollection(); interface.dismissCollectionUI()
         statusText = invalidationNotice ?? message
     }
 
@@ -672,6 +706,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
         phase = worker == nil ? .idle : .cancelling
     }
     private func finishWorker(_ identifier: UUID) {
+        workerImageBytes = 0
         worker = nil; isWorking = false
         if phase == .cancelling {
             phase = isActive ? .ready : .idle
