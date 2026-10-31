@@ -52,12 +52,23 @@ enum CaptureAnnotationRenderer {
         try Task.checkCancellation()
         try validateLimits(limits, extra: retainingExtraBytes)
         guard url.isFileURL else { throw CaptureAnnotationError.invalidImageSource }
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              let fileBytes = values.fileSize, fileBytes > 0 else { throw CaptureAnnotationError.invalidImageSource }
-        guard try add(fileBytes, retainingExtraBytes) <= limits.maximumImageBytes else { throw M0ImageError.memoryLimit }
+        // Reserve the encoded Data and a possible ImageIO/CFData bridge before reading.
+        guard retainingExtraBytes < limits.maximumImageBytes else { throw M0ImageError.memoryLimit }
+        let maximumEncodedBytes = (limits.maximumImageBytes - retainingExtraBytes) / 2
+        let archive = CaptureArchive(directory: url.standardizedFileURL.deletingLastPathComponent())
+        let png = try archive.readSavedPNG(url, maximumBytes: maximumEncodedBytes)
+        return try load(png: png, limits: limits, retainingExtraBytes: retainingExtraBytes)
+    }
+
+    static func load(png: Data, limits: M0ImageLimits = .init(), retainingExtraBytes: Int = 0) throws -> M0ImageAsset {
+        try Task.checkCancellation()
+        try validateLimits(limits, extra: retainingExtraBytes)
+        guard !png.isEmpty else { throw CaptureAnnotationError.invalidImageSource }
+        let encodedStores = try multiply(png.count, 2)
+        let encodedExtra = try add(retainingExtraBytes, encodedStores)
+        guard encodedExtra <= limits.maximumImageBytes else { throw M0ImageError.memoryLimit }
         return try autoreleasepool {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+            guard let source = CGImageSourceCreateWithData(png as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
                   CGImageSourceGetType(source) as String? == UTType.png.identifier,
                   CGImageSourceGetCount(source) == 1,
                   let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
@@ -68,16 +79,16 @@ enum CaptureAnnotationRenderer {
             guard try positiveInteger(properties[kCGImagePropertyDepth]) == 8 else { throw CaptureAnnotationError.unsupportedImage }
             let rgbaStride = try multiply(width, 4)
             let decodeStride = try multiply(try add(rgbaStride, 255) / 256, 256)
-            let extra = try add(retainingExtraBytes, fileBytes)
             _ = try makePlan(width: width, height: height, sourceStride: decodeStride,
-                             annotationReserve: 0, limits: limits, extra: extra)
+                             annotationReserve: 0, limits: limits, extra: encodedExtra)
             try Task.checkCancellation()
             guard let decoded = CGImageSourceCreateImageAtIndex(source, 0,
                     [kCGImageSourceShouldCacheImmediately: true] as CFDictionary),
                   decoded.width == width, decoded.height == height,
-                  decoded.bitsPerComponent == 8, decoded.bitsPerPixel <= 32 else { throw CaptureAnnotationError.unsupportedImage }
+                  decoded.bitsPerComponent == 8, decoded.bitsPerPixel <= 32,
+                  !decoded.bitmapInfo.contains(.floatComponents) else { throw CaptureAnnotationError.unsupportedImage }
             _ = try makePlan(width: width, height: height, sourceStride: decoded.bytesPerRow,
-                             annotationReserve: 0, limits: limits, extra: extra)
+                             annotationReserve: 0, limits: limits, extra: encodedExtra)
             try Task.checkCancellation()
             let normalized = try normalize(decoded, stride: rgbaStride)
             try Task.checkCancellation()

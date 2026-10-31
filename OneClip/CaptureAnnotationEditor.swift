@@ -313,6 +313,7 @@ private final class AnnotationCanvasView: NSView {
         context.draw(image, in: CGRect(origin: .zero, size: imageSize))
         context.restoreGState()
         try? CaptureAnnotationRenderer.draw(controller.annotations, in: context, imageSize: imageSize)
+        controller.recordImageDraw()
 
         context.setStrokeColor(NSColor.controlAccentColor.cgColor)
         context.setLineWidth(1.5 / zoom)

@@ -89,6 +89,15 @@ extension SingleCaptureInterface {
 protocol CaptureClipboardWriting {
     var changeCount: Int { get }
     func writePNG(_ data: Data, expectedChangeCount: Int) -> M0ClipboardProbe.Outcome
+    func writePNG(_ data: Data, expectedChangeCount: Int, securityTrace: CaptureSecurityTrace,
+                  mode: CaptureSecurityTrace.Mode) -> M0ClipboardProbe.Outcome
+}
+
+extension CaptureClipboardWriting {
+    func writePNG(_ data: Data, expectedChangeCount: Int, securityTrace: CaptureSecurityTrace,
+                  mode: CaptureSecurityTrace.Mode) -> M0ClipboardProbe.Outcome {
+        writePNG(data, expectedChangeCount: expectedChangeCount)
+    }
 }
 
 @MainActor
@@ -96,6 +105,11 @@ struct GeneralCaptureClipboard: CaptureClipboardWriting {
     var changeCount: Int { NSPasteboard.general.changeCount }
     func writePNG(_ data: Data, expectedChangeCount: Int) -> M0ClipboardProbe.Outcome {
         M0ClipboardProbe.writePNG(data, to: .general, expectedChangeCount: expectedChangeCount)
+    }
+    func writePNG(_ data: Data, expectedChangeCount: Int, securityTrace: CaptureSecurityTrace,
+                  mode: CaptureSecurityTrace.Mode) -> M0ClipboardProbe.Outcome {
+        M0ClipboardProbe.writePNG(data, to: .general, expectedChangeCount: expectedChangeCount,
+                                 securityTrace: securityTrace, traceMode: mode)
     }
 }
 
@@ -105,12 +119,20 @@ final class CaptureWorkerSlot {
     static let shared = CaptureWorkerSlot()
     private var owner: UUID?
     var isOccupied: Bool { owner != nil }
-    func acquire(_ identifier: UUID) -> Bool {
+    func acquire(_ identifier: UUID, securityTrace: CaptureSecurityTrace = .disabled,
+                 mode: CaptureSecurityTrace.Mode = .none) -> Bool {
         guard owner == nil else { return false }
         owner = identifier
+        securityTrace.record(.slotAcquired, mode: mode)
         return true
     }
-    func release(_ identifier: UUID) { if owner == identifier { owner = nil } }
+    func release(_ identifier: UUID, securityTrace: CaptureSecurityTrace = .disabled,
+                 mode: CaptureSecurityTrace.Mode = .none) {
+        if owner == identifier {
+            owner = nil
+            securityTrace.record(.slotReleased, mode: mode)
+        }
+    }
 }
 
 /// One operation owns the worker slot until capture/encoding really finishes, even after invalidation.
@@ -159,6 +181,23 @@ final class SingleCaptureCoordinator: ObservableObject {
     /// outside this coordinator. Failures never discard either mode's source images.
     var prepareExternalCapture: @MainActor () -> Bool = { true }
     var externalRetainedBytes: @MainActor () throws -> Int = { 0 }
+
+    /// Conservative ownership estimate for other image consumers. Immutable aliases may be
+    /// counted twice; overflow is unavailable capacity, never a zero-byte estimate.
+    var retainedImageBytes: Int {
+        var total = retainedPNG?.count ?? 0
+        if let asset = retainedAsset {
+            let pixels = asset.image.bytesPerRow.multipliedReportingOverflow(by: asset.image.height)
+            guard !pixels.overflow else { return Int.max }
+            let preview = min(asset.image.width, 1_024) * min(asset.image.height, 1_024) * 4
+            for amount in [pixels.partialValue, preview] {
+                let next = total.addingReportingOverflow(amount)
+                guard amount >= 0, !next.overflow else { return Int.max }
+                total = next.partialValue
+            }
+        }
+        return max(total, workerImageBytes)
+    }
     var canBegin: Bool {
         !isWorking && !workSlot.isOccupied && phase != .selecting && phase != .permission && phase != .onboarding
             && !isStopping && !interface.captureEntryBlocked
@@ -175,8 +214,10 @@ final class SingleCaptureCoordinator: ObservableObject {
     private let encode: @Sendable (M0ImageAsset, Int) async throws -> M0CompositionResult
     private let limits: M0ImageLimits
     private let preferences: CapturePreferences
+    let securityTrace: CaptureSecurityTrace
     private var operationID: UUID?
     private var worker: Task<Void, Never>?
+    private var workerImageBytes = 0
     private var selectionDisplay: CaptureDisplaySnapshot?
     private var captureResultID = UUID()
     private var retainedAsset: M0ImageAsset?
@@ -204,6 +245,7 @@ final class SingleCaptureCoordinator: ObservableObject {
          },
          preferences: CapturePreferences = .shared,
          limits: M0ImageLimits = .init(),
+         securityTrace: CaptureSecurityTrace = .disabled,
          encode: (@Sendable (M0ImageAsset) async throws -> M0CompositionResult)? = nil) {
         self.workSlot = workSlot
         self.capturer = capturer
@@ -215,12 +257,14 @@ final class SingleCaptureCoordinator: ObservableObject {
         self.displayAtPointer = displayAtPointer
         self.preferences = preferences
         self.limits = limits
+        self.securityTrace = securityTrace
         if let encode {
             self.encode = { asset, _ in try await encode(asset) }
         } else {
             self.encode = { asset, extraBytes in
                 try await M0ImageComposer.composeCancellable(assets: [asset], limits: limits,
-                                                              retainingExtraBytes: extraBytes)
+                                                              retainingExtraBytes: extraBytes,
+                                                              securityTrace: securityTrace, mode: .single)
             }
         }
     }
@@ -231,6 +275,7 @@ final class SingleCaptureCoordinator: ObservableObject {
 
     private func begin(rememberOrigin: Bool) {
         guard canBegin else { return }
+        securityTrace.record(.operationStarted, mode: .single, phase: .selecting)
         guard validateEnvironment(startIfNeeded: true) else { return }
         guard !hasRetainedImage else { interface.showProblem(activate: true); return }
         guard prepareExternalCapture() else { return }
@@ -331,10 +376,13 @@ final class SingleCaptureCoordinator: ObservableObject {
 
     func invalidate(message: String) {
         operationID = nil
+        securityTrace.record(.operationInvalidated, mode: .single,
+                             phase: CaptureSecurityTrace.Phase(rawValue: phase.rawValue) ?? .none)
         selectionDisplay = nil
         #if DEBUG
         selectedPractice = nil
         #endif
+        if worker != nil { securityTrace.record(.cancellationRequested, mode: .single) }
         worker?.cancel()
         retainedAsset = nil
         retainedPNG = nil
@@ -426,13 +474,15 @@ final class SingleCaptureCoordinator: ObservableObject {
         do { geometry = try RegionGeometry.plan(selection: selection, filterScale: selection.display.scale) }
         catch { fail("範囲を確認できません。もう一度選んでください。", stage: .selection); return }
         let budget: CaptureImageBudgetContext
+        let ownedReservation: Int
         do {
             budget = CaptureImageBudgetContext(retainingExtraBytes: try externalRetainedBytes())
             let stride = geometry.pixelWidth.multipliedReportingOverflow(by: 4)
             guard !stride.overflow else { throw M0ImageError.arithmeticOverflow }
-            _ = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
+            let admitted = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
                                                             bytesPerRow: stride.partialValue,
                                                             scale: Double(selection.display.scale)), limits: limits)
+            ownedReservation = admitted.estimatedPeakBytes - budget.retainingExtraBytes
         } catch {
             fail(budgetFailureMessage(retainingImage: false), stage: .capture)
             return
@@ -449,24 +499,34 @@ final class SingleCaptureCoordinator: ObservableObject {
         }
         #if DEBUG
         let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget,
-                                           settings: settings, practice: selectedPractice)
+                                           settings: settings, practice: selectedPractice,
+                                           securityTrace: securityTrace, traceMode: .single)
         #else
-        let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings)
+        let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings,
+                                           securityTrace: securityTrace, traceMode: .single)
         #endif
         let expectedCount = clipboard.changeCount
-        startWorker(identifier: identifier, expectedCount: expectedCount, existing: nil, request: request)
+        startWorker(identifier: identifier, expectedCount: expectedCount, existing: nil, request: request,
+                    ownedReservation: ownedReservation)
     }
 
-    private func startWorker(identifier: UUID, expectedCount: Int, existing: M0ImageAsset?, request: SingleCaptureRequest?) {
-        guard worker == nil, workSlot.acquire(identifier) else { return }
+    private func startWorker(identifier: UUID, expectedCount: Int, existing: M0ImageAsset?, request: SingleCaptureRequest?,
+                             ownedReservation: Int = 0) {
+        guard worker == nil, workSlot.acquire(identifier, securityTrace: securityTrace, mode: .single) else { return }
+        workerImageBytes = max(retainedImageBytes, ownedReservation)
         isWorking = true
         problem = nil
         phase = existing == nil ? .capturing : .encoding
         statusText = existing == nil ? "画像を取得しています…" : "画像を準備しています…"
-        worker = Task { [weak self, workSlot] in
-            defer { workSlot.release(identifier) }
+        worker = Task { [weak self, workSlot, securityTrace] in
+            securityTrace.record(.workerStarted, mode: .single)
+            defer {
+                securityTrace.record(.workerReturned, mode: .single)
+                workSlot.release(identifier, securityTrace: securityTrace, mode: .single)
+            }
             guard let self else { return }
             defer {
+                self.workerImageBytes = 0
                 self.worker = nil
                 self.isWorking = false
                 if self.phase == .cancelling {
@@ -491,24 +551,34 @@ final class SingleCaptureCoordinator: ObservableObject {
                 _ = try CaptureImageBudgetContext(retainingExtraBytes: self.externalRetainedBytes())
                     .validateCandidate(asset.metrics, limits: self.limits)
                 self.retainedAsset = asset
+                self.workerImageBytes = self.retainedImageBytes
+                securityTrace.record(.resultAdopted, mode: .single, phase: .capturing)
                 if existing == nil { self.captureResultID = UUID() }
                 self.phase = .encoding
                 self.statusText = "画像を準備しています…"
                 let data: Data
                 let encodingPlan = try self.singleImagePlan(for: asset)
+                self.workerImageBytes = encodingPlan.estimatedPeakBytes - encodingPlan.retainingExtraBytes
                 if let cached = self.retainedPNG, existing != nil { data = cached }
                 else {
                     let result = try await self.encode(asset, encodingPlan.retainingExtraBytes)
                     try self.checkCurrent(identifier)
                     _ = try self.validatePNG(result.pngData, for: asset)
                     self.retainedPNG = result.pngData
+                    securityTrace.record(.resultAdopted, mode: .single, phase: .encoding)
                     data = result.pngData
                 }
                 try self.checkCurrent(identifier)
                 _ = try self.validatePNG(data, for: asset)
+                self.workerImageBytes = try CaptureRetainedImageBudget.sum(
+                    CaptureRetainedImageBudget.images([asset.image]), data.count,
+                    encodingPlan.previewReserveBytes)
                 self.phase = .writing
                 // No await between the final operation check and the synchronous pasteboard write.
-                let result = self.clipboard.writePNG(data, expectedChangeCount: expectedCount)
+                let result = self.clipboard.writePNG(data, expectedChangeCount: expectedCount,
+                                                    securityTrace: securityTrace, mode: .single)
+                securityTrace.record(.clipboardOutcome, mode: .single, phase: .writing,
+                                     outcome: result.writeAccepted ? .accepted : .rejected)
                 if result.writeAccepted {
                     self.retainedAsset = nil
                     self.retainedPNG = nil
