@@ -186,6 +186,10 @@ private struct CaptureSettingsView: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                         .padding(.bottom, 16)
+                    Button("使い方…") { NativeCaptureInterface.shared.showUsageGuide() }
+                        .buttonStyle(.borderless)
+                        .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
+                        .padding(.horizontal, 4).padding(.bottom, 16)
                     DisclosureGroup("キーの使い方", isExpanded: $showsHelp) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("⌃ Control・⌥ Option・⌘ Commandのいずれかと、文字や数字などを組み合わせます。2つの撮影には別のキーを設定します。")
