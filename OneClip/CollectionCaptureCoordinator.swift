@@ -221,9 +221,7 @@ final class CollectionCaptureCoordinator: ObservableObject {
              return try ScreenshotService.snapshot(for: screen)
          },
          compose: @escaping @Sendable ([M0ImageAsset], M0ImageLimits) async throws -> M0CompositionResult = { assets, limits in
-             try await Task.detached(priority: .userInitiated) {
-                 try M0ImageComposer.compose(assets: assets, limits: limits)
-             }.value
+             try await M0ImageComposer.composeCancellable(assets: assets, limits: limits)
          }) {
         self.capturer = capturer; self.interface = interface; self.clipboard = clipboard
         self.workSlot = workSlot; self.preferences = preferences; self.limits = limits
