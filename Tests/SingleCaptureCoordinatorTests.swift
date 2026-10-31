@@ -44,7 +44,14 @@ struct SingleCaptureCoordinatorTests {
             ("D06-COORD-05 session fence rejects late capture without a delivered callback", testSessionFenceCapture),
             ("D06-COORD-06 session fence rejects late encoding and error UI", testSessionFenceEncoding),
             ("SETTINGS-COORD-01 invalid window stops before capture or write", testSettingsBoundary),
-            ("SETTINGS-COORD-02 guide and retry preserve entry origin", testSettingsOrigin)
+            ("SETTINGS-COORD-02 guide and retry preserve entry origin", testSettingsOrigin),
+            ("UX-SINGLE-01 external preparation blocks entry without discarding state", testExternalPreparation),
+            ("UX-SINGLE-02 retained collection bytes reach acquisition and enforce its boundary", testExternalAcquisitionBudget),
+            ("UX-SINGLE-03 changed external retention rejects a late image before adoption", testExternalAdoptionBudget),
+            ("UX-SINGLE-04 changed external retention rejects encoded PNG and keeps its source", testExternalEncodingBudget),
+            ("UX-SINGLE-05 cached retry rechecks external retention before writing", testExternalCachedBudget),
+            ("UX-SINGLE-06 actual encoded size cannot bypass the shared budget", testActualEncodedBudget),
+            ("UX-SINGLE-07 activation refreshes permission without starting capture", testPermissionRefresh)
         ]
         for (name, body) in groups {
             try await body()
@@ -72,6 +79,11 @@ struct SingleCaptureCoordinatorTests {
         var protectedData = true
         var requestGrants = false
         var requestCalls = 0
+    }
+
+    @MainActor
+    final class RetainedImageBudgetBox {
+        var bytes = 0
     }
 
     @MainActor
@@ -172,6 +184,7 @@ struct SingleCaptureCoordinatorTests {
         var calls = 0
         var pending: CheckedContinuation<M0ImageAsset, any Error>?
         var lastSelection: CaptureSelection?
+        var lastBudget: CaptureImageBudgetContext?
 
         init(asset: M0ImageAsset) { self.asset = asset }
 
@@ -179,6 +192,7 @@ struct SingleCaptureCoordinatorTests {
                      isCurrent: @escaping @MainActor () -> Bool) async throws -> M0ImageAsset {
             calls += 1
             lastSelection = request.selection
+            lastBudget = request.budget
             switch mode {
             case .immediate: return asset
             case .failure: throw ScreenshotError.captureFailed
@@ -200,11 +214,13 @@ struct SingleCaptureCoordinatorTests {
         private(set) var calls = 0
         private var failuresRemaining: Int
         private let paused: Bool
+        private let pngByteCount: Int?
         private var pending: CheckedContinuation<Void, Never>?
 
-        init(failures: Int = 0, paused: Bool = false) {
+        init(failures: Int = 0, paused: Bool = false, pngByteCount: Int? = nil) {
             failuresRemaining = failures
             self.paused = paused
+            self.pngByteCount = pngByteCount
         }
 
         var isWaiting: Bool { pending != nil }
@@ -219,7 +235,11 @@ struct SingleCaptureCoordinatorTests {
                 failuresRemaining -= 1
                 throw EncodeFailure.injected
             }
-            return try M0ImageComposer.compose(assets: [asset])
+            let result = try M0ImageComposer.compose(assets: [asset])
+            guard let pngByteCount else { return result }
+            // Fabricated bytes test actual encoded-size admission without allocating large images.
+            return M0CompositionResult(image: result.image, pngData: Data(repeating: 0, count: pngByteCount),
+                                       plan: result.plan, actualImageBytes: result.actualImageBytes)
         }
 
         func release() throws {
@@ -242,14 +262,15 @@ struct SingleCaptureCoordinatorTests {
         let coordinator: SingleCaptureCoordinator
 
         init(encoderFailures: Int = 0, pauseEncoder: Bool = false,
-             guideSeen: Bool = true, pasteHintSeen: Bool = false) throws {
+             guideSeen: Bool = true, pasteHintSeen: Bool = false,
+             limits: M0ImageLimits = .init(), pngByteCount: Int? = nil) throws {
             let display = try CaptureDisplaySnapshot(id: 41, frame: CGRect(x: -1_000, y: 0, width: 1_000, height: 800), scale: 2)
             let selection = try CaptureSelection(display: display, rect: CGRect(x: -990, y: 20, width: 8, height: 8))
             let interface = FakeInterface()
             let clipboard = FakeClipboard()
             let permissions = PermissionBox()
             let capturer = FakeCapturer(asset: try M0ImageFixture.make(index: 1, width: 16, height: 16, scale: 2))
-            let encoder = FakeEncoder(failures: encoderFailures, paused: pauseEncoder)
+            let encoder = FakeEncoder(failures: encoderFailures, paused: pauseEncoder, pngByteCount: pngByteCount)
             let preferences = CapturePreferences(defaults: nil, hasSeenCaptureGuide: guideSeen,
                                                  hasSeenPasteHint: pasteHintSeen)
             let coordinator = SingleCaptureCoordinator(capturer: capturer, interface: interface, clipboard: clipboard,
@@ -262,6 +283,7 @@ struct SingleCaptureCoordinatorTests {
                 protectedDataCheck: { permissions.protectedData },
                 displayAtPointer: { display },
                 preferences: preferences,
+                limits: limits,
                 encode: { asset in try await encoder.encode(asset) })
             self.display = display
             self.selection = selection
@@ -295,6 +317,162 @@ struct SingleCaptureCoordinatorTests {
         h.coordinator.retryCopy()
         await Task.yield()
         try expect(h.clipboard.calls == 1, "Released image remained available for another write")
+    }
+
+    static func smallImageLimits(extraBytes: Int = 0) throws -> M0ImageLimits {
+        let metrics = M0ImageMetrics(width: 16, height: 16, bytesPerRow: 64, scale: 2)
+        let baseline = try CaptureImageBudgetContext().validateCandidate(metrics)
+        var limits = M0ImageLimits()
+        limits.maximumImageBytes = baseline.estimatedPeakBytes + extraBytes
+        return limits
+    }
+
+    @MainActor
+    static func testExternalPreparation() async throws {
+        let h = try Harness()
+        var preparationCalls = 0
+        h.coordinator.prepareExternalCapture = { preparationCalls += 1; return false }
+        h.coordinator.begin()
+        try expect(preparationCalls == 1 && h.coordinator.phase == .idle && h.interface.selectionCalls == 0
+                   && h.interface.rememberCalls == 0 && h.capturer.calls == 0 && h.clipboard.calls == 0,
+                   "Blocked collection preparation changed focus, selected or wrote")
+        h.coordinator.prepareExternalCapture = { true }
+        h.clipboard.mode = .rejected
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        h.coordinator.prepareExternalCapture = { preparationCalls += 1; return false }
+        h.coordinator.begin()
+        try expect(h.coordinator.hasRetainedImage && preparationCalls == 1 && h.capturer.calls == 1,
+                   "Existing single image was discarded or collection caches touched during begin")
+        h.coordinator.discard()
+    }
+
+    @MainActor
+    static func testExternalAcquisitionBudget() async throws {
+        let limits = try smallImageLimits(extraBytes: 10_000)
+        let h = try Harness(limits: limits)
+        var externalBytes = 10_001
+        h.coordinator.externalRetainedBytes = { externalBytes }
+        try h.beginAndSelect()
+        try expect(h.capturer.calls == 0 && !h.coordinator.hasRetainedImage && h.clipboard.calls == 0
+                   && h.coordinator.problem?.message.contains("小さい範囲") == true,
+                   "Over-budget selection reached capture or lost its recovery guidance")
+        externalBytes = 10_000
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        try expect(h.capturer.lastBudget?.retainingExtraBytes == externalBytes
+                   && h.capturer.lastBudget?.existing.isEmpty == true && h.clipboard.successfulWrites == 1,
+                   "Single acquisition omitted retained collection bytes or treated them as single sources")
+
+        for invalidBytes in [-1, Int.max] {
+            let invalid = try Harness(limits: limits)
+            invalid.coordinator.externalRetainedBytes = { invalidBytes }
+            try invalid.beginAndSelect()
+            try expect(invalid.capturer.calls == 0 && invalid.clipboard.calls == 0
+                       && invalid.coordinator.phase == .failure, "Invalid external bytes reached acquisition")
+        }
+    }
+
+    @MainActor
+    static func testExternalAdoptionBudget() async throws {
+        let limits = try smallImageLimits()
+        let h = try Harness(limits: limits)
+        var externalBytes = 0
+        h.coordinator.externalRetainedBytes = { externalBytes }
+        h.capturer.mode = .paused
+        try h.beginAndSelect()
+        try await waitUntil { h.capturer.pending != nil }
+        externalBytes = limits.maximumImageBytes
+        try h.capturer.release()
+        await h.coordinator.waitForWorker()
+        let encodeCalls = await h.encoder.calls
+        try expect(!h.coordinator.hasRetainedImage && encodeCalls == 0 && h.clipboard.calls == 0
+                   && h.coordinator.problem?.stage == .capture && externalBytes == limits.maximumImageBytes,
+                   "Late image bypassed fresh external retention or changed the collection's retention")
+    }
+
+    @MainActor
+    static func testExternalEncodingBudget() async throws {
+        let limits = try smallImageLimits()
+        let h = try Harness(pauseEncoder: true, limits: limits)
+        let externalBudget = RetainedImageBudgetBox()
+        h.coordinator.externalRetainedBytes = { externalBudget.bytes }
+        try h.beginAndSelect()
+        try await waitUntil { await h.encoder.isWaiting }
+        externalBudget.bytes = limits.maximumImageBytes
+        try await h.encoder.release()
+        await h.coordinator.waitForWorker()
+        try expect(h.coordinator.hasRetainedImage && h.clipboard.calls == 0
+                   && h.coordinator.problem?.stage == .encoding,
+                   "External budget growth adopted or wrote encoded PNG, or discarded the acquired source")
+        #if DEBUG
+        try expect(!h.coordinator.hasRetainedPNG, "Rejected encoding cached its PNG")
+        #endif
+        externalBudget.bytes = 0
+        h.coordinator.retryCopy()
+        await h.coordinator.waitForWorker()
+        let encodeCalls = await h.encoder.calls
+        try expect(h.clipboard.successfulWrites == 1 && encodeCalls == 2 && h.capturer.calls == 1,
+                   "Retained image could not recover without recapture after budget became available")
+    }
+
+    @MainActor
+    static func testExternalCachedBudget() async throws {
+        let limits = try smallImageLimits()
+        let h = try Harness(limits: limits)
+        let externalBudget = RetainedImageBudgetBox()
+        h.coordinator.externalRetainedBytes = { externalBudget.bytes }
+        h.clipboard.mode = .rejected
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        externalBudget.bytes = limits.maximumImageBytes
+        h.coordinator.retryCopy()
+        await h.coordinator.waitForWorker()
+        try expect(h.coordinator.hasRetainedImage && h.clipboard.calls == 1,
+                   "Over-budget cached retry wrote or discarded its source")
+        #if DEBUG
+        try expect(h.coordinator.hasRetainedPNG, "Over-budget cached retry discarded its existing PNG")
+        #endif
+        externalBudget.bytes = 0
+        h.clipboard.mode = .accepted
+        h.coordinator.retryCopy()
+        await h.coordinator.waitForWorker()
+        let encodeCalls = await h.encoder.calls
+        try expect(h.clipboard.successfulWrites == 1 && encodeCalls == 1 && h.capturer.calls == 1,
+                   "Cached retry unnecessarily recaptured/re-encoded after capacity returned")
+    }
+
+    @MainActor
+    static func testActualEncodedBudget() async throws {
+        let h = try Harness(limits: smallImageLimits(), pngByteCount: 80_000)
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        try expect(h.coordinator.hasRetainedImage && h.clipboard.calls == 0
+                   && h.coordinator.problem?.stage == .encoding,
+                   "Actual PNG byte count bypassed final resource validation")
+        #if DEBUG
+        try expect(!h.coordinator.hasRetainedPNG, "Oversized PNG became a retry cache")
+        #endif
+        h.coordinator.discard()
+    }
+
+    @MainActor
+    static func testPermissionRefresh() async throws {
+        let h = try Harness()
+        h.permissions.allowed = false
+        h.coordinator.begin()
+        h.permissions.allowed = true
+        h.coordinator.refreshPermissionStatus()
+        try expect(h.coordinator.phase == .permission && h.coordinator.permissionStatus == .granted
+                   && h.interface.selectionCalls == 0 && h.permissions.requestCalls == 0,
+                   "Activation refresh requested OS permission or started a selection")
+        h.coordinator.retryPermission()
+        try expect(h.interface.selectionCalls == 1, "Explicit retry after activation refresh did not select")
+        h.coordinator.cancel()
+        h.permissions.allowed = false
+        h.coordinator.refreshPermissionStatus()
+        try expect(h.coordinator.permissionStatus == .granted && h.permissions.requestCalls == 0,
+                   "Inactive permission flow was changed by a background refresh")
     }
 
     @MainActor
@@ -690,10 +868,16 @@ struct SingleCaptureCoordinatorTests {
     @MainActor
     static func testPreferences() async throws {
         let memory = CapturePreferences(defaults: nil)
+        try expect(!memory.hasSeenWelcome && !memory.hasSeenCaptureGuide && !memory.hasSeenCollectionGuide,
+                   "A new memory preference store skipped welcome or a mode guide")
         memory.hasSeenCaptureGuide = true
         let other = CapturePreferences(defaults: nil)
         try expect(memory.hasSeenCaptureGuide && !memory.hasSeenCollectionGuide && !memory.hasSeenPasteHint && !other.hasSeenCaptureGuide,
                    "Memory preferences leaked between instances or acknowledged another guide early")
+        try expect(memory.hasSeenWelcome && !other.hasSeenWelcome
+                   && CapturePreferences(defaults: nil, hasSeenCollectionGuide: true).hasSeenWelcome
+                   && !CapturePreferences(defaults: nil, hasSeenPasteHint: true).hasSeenWelcome,
+                   "Welcome migration did not recognize either legacy mode guide independently")
         memory.hasSeenCollectionGuide = true
         try expect(memory.hasSeenCollectionGuide && !other.hasSeenCollectionGuide,
                    "Collection guide acknowledgement leaked between memory stores")
@@ -714,6 +898,16 @@ struct SingleCaptureCoordinatorTests {
         let domain = defaults.persistentDomain(forName: suiteName) ?? [:]
         try expect(domain.count == 3 && domain.values.allSatisfy { $0 is Bool },
                    "Preferences stored values other than the three acknowledgement flags")
+        defaults.removePersistentDomain(forName: suiteName)
+        let welcome = CapturePreferences(defaults: defaults)
+        welcome.hasSeenWelcome = true
+        let restoredWelcome = CapturePreferences(defaults: defaults)
+        try expect(restoredWelcome.hasSeenWelcome && !restoredWelcome.hasSeenCaptureGuide
+                   && !restoredWelcome.hasSeenCollectionGuide && !restoredWelcome.hasSeenPasteHint,
+                   "Stored welcome acknowledgement marked a mode guide or paste hint seen")
+        let welcomeDomain = defaults.persistentDomain(forName: suiteName) ?? [:]
+        try expect(welcomeDomain.count == 1 && welcomeDomain["OneClip.hasSeenWelcome"] as? Bool == true,
+                   "Explicit welcome acknowledgement persisted unexpected preference keys")
     }
 
     @MainActor

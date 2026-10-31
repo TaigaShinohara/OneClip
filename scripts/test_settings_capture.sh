@@ -31,11 +31,11 @@ for source in OneClip/*.swift; do
 done
 tests=("$@")
 if [[ ${#tests[@]} == 0 ]]; then
-    tests=(ProductHotKeyTests SettingsCaptureScopeTests SingleCaptureCoordinatorTests CollectionCaptureCoordinatorTests)
+    tests=(ProductHotKeyTests SettingsCaptureScopeTests SingleCaptureCoordinatorTests CollectionCaptureCoordinatorTests CollectionPreviewNavigationTests RegionGeometryTests ScreenshotBudgetTests M0ImageCoreTests)
 fi
 for test in "${tests[@]}"; do
     case "$test" in
-        ProductHotKeyTests|SettingsCaptureScopeTests|SingleCaptureCoordinatorTests|CollectionCaptureCoordinatorTests) ;;
+        ProductHotKeyTests|SettingsCaptureScopeTests|SingleCaptureCoordinatorTests|CollectionCaptureCoordinatorTests|CollectionPreviewNavigationTests|RegionGeometryTests|ScreenshotBudgetTests|M0ImageCoreTests) ;;
         *) echo "Unknown test suite: $test" >&2; exit 1 ;;
     esac
     preflight

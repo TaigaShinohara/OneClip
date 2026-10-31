@@ -15,7 +15,7 @@ struct CollectionCaptureCoordinatorTests {
         let groups: [(String, @MainActor () async throws -> Void)] = [
             ("M3-COORD-01 initial cancel differs from an edited empty session", testEmpty),
             ("M3-COORD-02 successful additions preserve order and enforce four sources", testAddAndDelete),
-            ("M3-COORD-03 replacement adopts only success at the same position", testReplacement),
+            ("M3-COORD-03 replacement waits for explicit adoption at the same position", testReplacement),
             ("M3-COORD-04 cancelled or failed addition preserves existing sources", testAdditionFailure),
             ("M3-COORD-05 composition and clipboard failures retain sources for retry", testFailureAndRetry),
             ("M3-COORD-06 encoding cancel keeps sources and owns the worker until return", testEncodingCancellation),
@@ -40,7 +40,15 @@ struct CollectionCaptureCoordinatorTests {
             ("M3-COORD-25 cancel rechecks environment permission and protected data", testUnavailableCancellation),
             ("M3-COORD-26 display errors invalidate while ordinary capture failures retain sources", testDisplayChangeError),
             ("SETTINGS-COLLECTION-01 invalid settings preserves additions and replacements", testSettingsBoundary),
-            ("SETTINGS-COLLECTION-02 guide and permission preserve entry origin", testSettingsOrigin)
+            ("SETTINGS-COLLECTION-02 guide and permission preserve entry origin", testSettingsOrigin),
+            ("UX-COLLECTION-01 replacement review changes content only on adoption", testReplacementContentRevision),
+            ("UX-COLLECTION-02 copied content survives cancelled selections and workers", testCopiedContentCancellation),
+            ("UX-COLLECTION-03 a failed recopy stays visible alongside previous copy state", testRecopyFailureStatus),
+            ("UX-COLLECTION-04 invalidation notice survives empty events and the next shortcut", testInvalidationNotice),
+            ("UX-COLLECTION-05 new-session admission preserves a rejected copied draft", testNewSessionAdmission),
+            ("UX-COLLECTION-06 retained collection permits an independent single capture", testSingleWithRetainedCollection),
+            ("UX-COLLECTION-07 replacement decisions recheck unavailable data", testReplacementDecisionFences),
+            ("UX-COLLECTION-08 single entry fences retained collection without blocking first permission guidance", testSingleEntryRetainedFence)
         ]
         for (name, body) in groups {
             try await body()
@@ -271,6 +279,9 @@ struct CollectionCaptureCoordinatorTests {
         }
         func add(index: Int = 1, width: Int = 16, height: Int = 16) async throws {
             capturer.nextAsset = try M0ImageFixture.make(index: index, width: width, height: height)
+            // This helper represents an explicitly acknowledged fresh operation. Shortcut-only
+            // preservation of the notice is covered separately by testInvalidationNotice.
+            coordinator.acknowledgeInvalidation()
             coordinator.beginOrAdd()
             try select(width: width, height: height)
             await coordinator.waitForWorker()
@@ -344,12 +355,17 @@ struct CollectionCaptureCoordinatorTests {
         let h = try Harness(); defer { h.cleanUp() }
         for index in 1...4 { try await h.add(index: index, width: 10 + index) }
         try expect(h.coordinator.assets.map { $0.image.width } == [11, 12, 13, 14], "Successful additions changed order")
+        let assetIDs = h.coordinator.items.map(\.id)
+        try expect(Set(assetIDs).count == 4, "Source rows do not have distinct identities")
         let selected = h.interface.selectionCalls, captured = h.capturer.calls
         h.coordinator.beginOrAdd()
         try expect(!h.coordinator.canAdd && h.interface.selectionCalls == selected && h.capturer.calls == captured,
                    "Fifth addition started selection or acquisition")
         try h.delete(at: 1)
         try expect(h.coordinator.assets.map { $0.image.width } == [11, 13, 14], "Delete removed the wrong source")
+        try expect(h.coordinator.items.map(\.id) == [assetIDs[0], assetIDs[2], assetIDs[3]]
+                   && h.coordinator.items.map(\.index) == [0, 1, 2],
+                   "Deleting a source replaced surviving identities instead of only renumbering them")
         try expect(h.coordinator.plan?.placements.map(\.index) == [0, 1, 2], "Delete left stale numbering")
         try expect(h.clipboard.calls == 0, "Collection/editing wrote the clipboard")
     }
@@ -372,6 +388,13 @@ struct CollectionCaptureCoordinatorTests {
         try expect(h.coordinator.phase == .selecting, "Replacement reused a prior region without selection")
         try h.select(width: 24, height: 12, x: 80)
         await h.coordinator.waitForWorker()
+        guard let candidate = h.coordinator.pendingReplacement else {
+            throw Failure(description: "Successful capture did not enter replacement review")
+        }
+        try expect(h.coordinator.phase == .reviewingReplacement && h.coordinator.assets[0].image === original
+                   && candidate.candidate.image.width == 24 && !h.coordinator.canCopy && !h.coordinator.canAdd,
+                   "Successful replacement capture adopted before the explicit decision")
+        h.coordinator.acceptReplacement(id: candidate.id)
         try expect(h.coordinator.assets.map { $0.image.width } == [24, 20], "Successful replacement changed the source position")
         try expect(h.capturer.requests.last?.selection.rect.minX == 80, "Replacement reused old coordinates")
     }
@@ -452,8 +475,9 @@ struct CollectionCaptureCoordinatorTests {
         try expect(h.composer.calls == 2 && h.capturer.calls == 1 && h.clipboard.accepted == 1,
                    "Retry recaptured or recomposed a cached completed image")
         try expect(h.clipboard.expectedCounts == [1, 2], "Retry reused stale clipboard revision")
-        try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty && h.coordinator.completed == nil
-                   && !h.slot.isOccupied && h.interface.feedback.count == 1, "Success retained a session or worker")
+        try expect(h.coordinator.isActive && h.coordinator.assets.count == 1 && h.coordinator.completed == nil
+                   && h.coordinator.isCopiedCurrent && !h.slot.isOccupied && h.interface.feedback.count == 1,
+                   "Success lost the editable copied draft or retained its output cache/worker")
     }
 
     @MainActor
@@ -615,7 +639,8 @@ struct CollectionCaptureCoordinatorTests {
         h.clipboard.beforeWrite = nil
         try expect(sawWriting && h.clipboard.calls == 1 && h.clipboard.accepted == 1 && h.composer.calls == 1,
                    "Writing could be cancelled or duplicated")
-        try expect(!h.coordinator.isActive && !h.slot.isOccupied, "Writing completion retained the session")
+        try expect(h.coordinator.isActive && h.coordinator.isCopiedCurrent && !h.slot.isOccupied,
+                   "Writing completion lost the copied draft or retained the shared worker")
     }
 
     @MainActor
@@ -653,9 +678,13 @@ struct CollectionCaptureCoordinatorTests {
         let h = try Harness(); defer { h.cleanUp() }
         try await h.add(); h.coordinator.environmentDidChange(.systemSleep)
         let shows = h.interface.collectionActivations.count
-        h.coordinator.cancelOperation(); h.coordinator.showPanel()
+        h.coordinator.cancelOperation()
         try expect(h.coordinator.phase == .idle && !h.coordinator.isActive && h.interface.collectionActivations.count == shows,
                    "Invalidated callback revived collection UI")
+        h.coordinator.showPanel()
+        try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty
+                   && h.coordinator.invalidationNotice != nil && h.interface.collectionActivations.count == shows + 1,
+                   "Explicit review of an invalidation notice revived sources or hid the notice")
         h.coordinator.stop(); h.coordinator.cancelOperation()
         try expect(h.coordinator.phase == .idle && !h.coordinator.isActive, "Stopped callback revived collection")
     }
@@ -695,7 +724,8 @@ struct CollectionCaptureCoordinatorTests {
             }
             h.clipboard.mode = .accepted
             h.coordinator.copy(); await h.coordinator.waitForWorker()
-            try expect(!h.coordinator.isActive && h.clipboard.accepted == 1 && h.composer.calls == 1,
+            try expect(h.coordinator.isActive && h.coordinator.isCopiedCurrent
+                       && h.clipboard.accepted == 1 && h.composer.calls == 1,
                        "Explicit retry failed or needlessly recomposed")
         }
     }
@@ -831,7 +861,7 @@ struct CollectionCaptureCoordinatorTests {
             if state == 2 { try h.composer.release() }
             await h.coordinator.waitForWorker()
             try expect(h.coordinator.phase == .idle && !h.slot.isOccupied && !h.coordinator.isWorking
-                       && h.interface.collectionActivations.count == shown && h.clipboard.calls == 0
+                       && h.interface.collectionActivations.count == shown + 1 && h.clipboard.calls == 0
                        && h.interface.feedback.isEmpty && h.coordinator.completed == nil,
                        "Display-change late result or old UI restored images, success, or copy")
             try await h.add(index: 3)
@@ -935,6 +965,325 @@ struct CollectionCaptureCoordinatorTests {
                    && late.coordinator.assets.count == 1 && late.coordinator.assets[0].image === original
                    && late.interface.collectionActivations.count == activations && late.clipboard.calls == 0,
                    "An obsolete worker's display error invalidated a healthy cancelled session")
+    }
+
+    @MainActor
+    static func testReplacementContentRevision() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add(); try await h.add(index: 2, width: 20)
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        let content = h.coordinator.contentRevision, copied = h.coordinator.copiedContentRevision
+        let sourceIDs = h.coordinator.items.map(\.id), original = h.coordinator.assets[0].image
+        h.capturer.nextAsset = try M0ImageFixture.make(index: 3, width: 24, height: 12)
+        h.coordinator.replace(assetID: sourceIDs[0]); try h.select(width: 24, height: 12)
+        await h.coordinator.waitForWorker()
+        guard let rejected = h.coordinator.pendingReplacement else { throw Failure(description: "Missing replacement decision") }
+        try expect(h.coordinator.contentRevision == content && h.coordinator.copiedContentRevision == copied
+                   && h.coordinator.isCopiedCurrent && h.coordinator.needsEndConfirmation
+                   && h.coordinator.assets[0].image === original && h.coordinator.items.map(\.id) == sourceIDs,
+                   "Acquiring a candidate changed copied content, source identity or the old image")
+        h.coordinator.keepOriginalReplacement(id: rejected.id)
+        try expect(h.coordinator.pendingReplacement == nil && h.coordinator.contentRevision == content
+                   && h.coordinator.copiedContentRevision == copied && h.coordinator.isCopiedCurrent
+                   && !h.coordinator.needsEndConfirmation && h.coordinator.assets[0].image === original,
+                   "Keeping the original changed content or lost the previous copy state")
+        h.coordinator.replace(assetID: sourceIDs[0]); try h.select(width: 24, height: 12)
+        await h.coordinator.waitForWorker()
+        guard let accepted = h.coordinator.pendingReplacement else { throw Failure(description: "Missing second replacement decision") }
+        h.coordinator.acceptReplacement(id: rejected.id)
+        try expect(h.coordinator.pendingReplacement?.id == accepted.id && h.coordinator.contentRevision == content,
+                   "A stale candidate decision changed the current review")
+        h.coordinator.acceptReplacement(id: accepted.id)
+        let adoptedContent = h.coordinator.contentRevision
+        try expect(adoptedContent != content && h.coordinator.copiedContentRevision == copied
+                   && !h.coordinator.isCopiedCurrent && h.coordinator.needsEndConfirmation
+                   && h.coordinator.items.map(\.id) == sourceIDs && h.coordinator.assets.map { $0.image.width } == [24, 20],
+                   "Adoption failed to change only the selected content at its stable identity")
+        h.coordinator.acceptReplacement(id: accepted.id)
+        h.coordinator.keepOriginalReplacement(id: rejected.id)
+        try expect(h.coordinator.contentRevision == adoptedContent && h.coordinator.pendingReplacement == nil,
+                   "An already completed review changed content again")
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        try expect(h.coordinator.isCopiedCurrent && h.coordinator.copiedContentRevision == adoptedContent,
+                   "Copying the adopted content did not acknowledge its revision")
+    }
+
+    @MainActor
+    static func testCopiedContentCancellation() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add()
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        let session = h.coordinator.sessionID, content = h.coordinator.contentRevision
+        let copied = h.coordinator.copiedContentRevision, image = h.coordinator.assets[0].image
+        h.coordinator.beginOrAdd(); h.coordinator.cancelOperation()
+        try expect(h.coordinator.sessionID == session && h.coordinator.contentRevision == content
+                   && h.coordinator.copiedContentRevision == copied && h.coordinator.isCopiedCurrent
+                   && h.coordinator.assets[0].image === image, "Selection cancellation changed the copied draft")
+        h.composer.pauseNext = true; h.coordinator.preparePreview()
+        try await waitUntil { h.composer.isWaiting }
+        h.coordinator.cancelOperation()
+        let selections = h.interface.selectionCalls, writes = h.clipboard.calls
+        try expect(h.coordinator.phase == .cancelling && h.coordinator.isWorking && h.slot.isOccupied
+                   && h.coordinator.latestResultText.contains("取り消して")
+                   && !h.coordinator.latestResultText.contains("取り消しました"),
+                   "Cancellation reported completion before the worker returned")
+        h.coordinator.beginFromShortcut(); h.coordinator.copy()
+        try expect(h.interface.selectionCalls == selections && h.clipboard.calls == writes
+                   && h.coordinator.contentRevision == content && h.coordinator.copiedContentRevision == copied,
+                   "Cancellation waiting started the next operation or changed copy state")
+        try h.composer.release(); await h.coordinator.waitForWorker()
+        try expect(h.coordinator.phase == .ready && !h.slot.isOccupied && h.coordinator.completed == nil
+                   && h.coordinator.latestResultText.contains("取り消しました")
+                   && h.coordinator.sessionID == session && h.coordinator.contentRevision == content
+                   && h.coordinator.copiedContentRevision == copied && h.coordinator.isCopiedCurrent
+                   && h.clipboard.calls == writes && h.coordinator.assets[0].image === image,
+                   "A cancelled late result replaced retained content, copy state or the cancellation result")
+    }
+
+    @MainActor
+    static func testRecopyFailureStatus() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add()
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        let copied = h.coordinator.copiedContentRevision
+        h.clipboard.mode = .rejectedAfterPrepare
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        try expect(h.coordinator.isCopiedCurrent && h.coordinator.copiedContentRevision == copied
+                   && h.coordinator.contentStatusText.contains("前回コピー後に素材変更なし")
+                   && h.coordinator.latestResultText.contains("コピーできませんでした")
+                   && h.coordinator.latestResultText.contains("残っていない場合")
+                   && h.clipboard.accepted == 1 && h.coordinator.hasRetainedImages,
+                   "A prior successful copy hid the latest recopy failure or its clipboard uncertainty")
+    }
+
+    @MainActor
+    static func testInvalidationNotice() async throws {
+        for copyState in 0..<3 {
+            let h = try Harness(); defer { h.cleanUp() }
+            try await h.add(); try await h.add(index: 2, width: 20)
+            if copyState > 0 { h.coordinator.copy(); await h.coordinator.waitForWorker() }
+            if copyState == 2 { try await h.add(index: 3, width: 24) }
+            let count = h.coordinator.assets.count
+            h.coordinator.environmentDidChange(.systemSleep)
+            guard let notice = h.coordinator.invalidationNotice else { throw Failure(description: "Missing invalidation notice") }
+            let expectedCopyState = copyState == 0 ? "このまとめはコピーしていません"
+                : (copyState == 1 ? "この内容の前回コピーは成功しました" : "前回コピー後の変更はコピーしていません")
+            try expect(notice.contains("前のまとめ\(count)枚") && notice.contains(expectedCopyState)
+                       && !h.coordinator.isActive && h.coordinator.assets.isEmpty,
+                       "Invalidation omitted the previous image count or the last copied content state")
+            h.coordinator.environmentDidChange(.displayChanged)
+            try expect(h.coordinator.invalidationNotice == notice && h.coordinator.latestResultText == notice,
+                       "An environment event with no sources overwrote the substantive loss notice")
+            let selections = h.interface.selectionCalls, shown = h.interface.collectionActivations.count
+            h.coordinator.beginFromShortcut(); h.coordinator.beginOrAdd()
+            try expect(h.coordinator.invalidationNotice == notice && !h.coordinator.isActive
+                       && h.interface.selectionCalls == selections && h.interface.collectionActivations.count == shown + 2,
+                       "The next shortcut/add action erased the notice or silently started a new draft")
+            h.coordinator.beginNewSession()
+            try expect(h.coordinator.invalidationNotice == nil && h.coordinator.phase == .selecting
+                       && h.interface.selectionCalls == selections + 1,
+                       "An explicit new draft could not acknowledge the notice and resume")
+            h.coordinator.cancelOperation()
+        }
+    }
+
+    @MainActor
+    static func testNewSessionAdmission() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add()
+        h.coordinator.copy(); await h.coordinator.waitForWorker()
+        let session = h.coordinator.sessionID, content = h.coordinator.contentRevision
+        let copied = h.coordinator.copiedContentRevision, image = h.coordinator.assets[0].image
+        let sourceID = h.coordinator.items[0].id, selections = h.interface.selectionCalls
+        h.interface.prepareResult = false
+        h.coordinator.beginNewSession()
+        h.interface.prepareResult = true
+        h.coordinator.externalOperationBlocked = { true }
+        h.coordinator.beginNewSession()
+        h.coordinator.externalOperationBlocked = { false }
+        h.interface.captureEntryBlocked = true
+        h.coordinator.beginFromShortcut()
+        try expect(h.coordinator.sessionID == session && h.coordinator.contentRevision == content
+                   && h.coordinator.copiedContentRevision == copied && h.coordinator.items[0].id == sourceID
+                   && h.coordinator.assets[0].image === image && h.interface.selectionCalls == selections,
+                   "Rejected new-draft admission discarded the retained copied draft")
+        h.interface.captureEntryBlocked = false
+        h.coordinator.beginFromShortcut()
+        try expect(h.coordinator.phase == .selecting && h.coordinator.sessionID != session
+                   && h.coordinator.assets.isEmpty && h.coordinator.copiedContentRevision == nil
+                   && h.interface.selectionCalls == selections + 1,
+                   "An unchanged copied draft required confirmation or failed to start the next shortcut draft")
+        h.coordinator.cancelOperation()
+        try await h.add()
+        let uncopiedSession = h.coordinator.sessionID
+        h.coordinator.beginNewSession()
+        try expect(h.coordinator.sessionID == uncopiedSession && h.coordinator.hasRetainedImages
+                   && h.coordinator.latestResultText.contains("終了を確認"),
+                   "An unconfirmed new draft discarded uncopied content")
+        h.coordinator.beginNewSession(discardConfirmed: true)
+        try expect(h.coordinator.phase == .selecting && h.coordinator.sessionID != uncopiedSession
+                   && h.coordinator.assets.isEmpty, "Confirmed draft replacement did not start a fresh selection")
+        h.coordinator.cancelOperation()
+    }
+
+    @MainActor
+    static func testSingleWithRetainedCollection() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add(); try await h.add(index: 2, width: 20)
+        h.coordinator.preparePreview(); await h.coordinator.waitForWorker()
+        try expect(h.coordinator.completed != nil, "Missing collection cache for independent single capture")
+        let content = h.coordinator.contentRevision, sourceIDs = h.coordinator.items.map(\.id)
+        // Record identity without retaining source buffers past an explicit end of editing.
+        let originals = h.coordinator.assets.map { ObjectIdentifier($0.image) }
+        let singleUI = FakeInterface(), singleCapture = FakeCapture(asset: try M0ImageFixture.make(index: 4, width: 16, height: 16))
+        let single = h.makeSingle(interface: singleUI, capturer: singleCapture)
+        defer { single.stop(); singleCapture.releaseIfPending() }
+        single.prepareExternalCapture = { h.coordinator.prepareForSingleCapture() }
+        single.externalRetainedBytes = { h.coordinator.retainedImageBytes }
+        h.coordinator.externalOperationBlocked = { [weak single] in
+            guard let single else { return false }
+            return single.isWorking || single.hasRetainedImage || [.onboarding, .permission, .selecting].contains(single.phase)
+        }
+        h.coordinator.externalWorkInProgress = { [weak single] in
+            guard let single else { return false }
+            return single.isWorking || [.selecting, .permission, .onboarding].contains(single.phase)
+        }
+        single.begin()
+        try expect(h.coordinator.completed == nil && single.phase == .selecting
+                   && !h.coordinator.canEdit && !h.coordinator.canEndSession,
+                   "Independent single entry retained regenerable collection output or allowed parallel editing")
+        h.coordinator.discard()
+        try expect(h.coordinator.isActive && h.coordinator.contentRevision == content
+                   && h.coordinator.items.map(\.id) == sourceIDs && single.phase == .selecting,
+                   "Collection ending during single selection discarded the draft or changed the single operation")
+        let expectedBudget = h.coordinator.retainedImageBytes
+        singleCapture.pauseNext = true
+        singleUI.selected?(try h.selection())
+        try await waitUntil { singleCapture.isWaiting }
+        h.coordinator.discard()
+        try expect(!h.coordinator.canEndSession && h.coordinator.isActive
+                   && h.coordinator.contentRevision == content && h.coordinator.items.map(\.id) == sourceIDs
+                   && single.isWorking && h.slot.isOccupied,
+                   "Collection ending during single acquisition discarded sources or released live work")
+        try singleCapture.release(); await single.waitForWorker()
+        try expect(singleCapture.calls == 1 && h.clipboard.accepted == 1
+                   && singleCapture.requests.last?.budget.retainingExtraBytes == expectedBudget
+                   && h.coordinator.contentRevision == content && h.coordinator.copiedContentRevision == nil
+                   && h.coordinator.items.map(\.id) == sourceIDs && ObjectIdentifier(h.coordinator.assets[0].image) == originals[0]
+                   && ObjectIdentifier(h.coordinator.assets[1].image) == originals[1] && h.coordinator.canEdit,
+                   "Single capture did not copy independently while preserving the collection and its byte accounting")
+        h.clipboard.mode = .rejectedBeforePrepare
+        single.begin(); singleUI.selected?(try h.selection()); await single.waitForWorker()
+        try expect(single.hasRetainedImage && !h.coordinator.canEdit && !h.coordinator.canCopy
+                   && h.coordinator.canEndSession,
+                   "A failed single image did not make collection editing/copying read-only")
+        let captures = h.capturer.calls, compositions = h.composer.calls, writes = h.clipboard.calls
+        h.coordinator.beginOrAdd(); h.coordinator.replace(assetID: sourceIDs[0]); h.coordinator.copy(); h.coordinator.preparePreview()
+        try expect(h.coordinator.deletionTarget(assetID: sourceIDs[0]) == nil && h.capturer.calls == captures
+                   && h.composer.calls == compositions && h.clipboard.calls == writes
+                   && h.coordinator.contentRevision == content && h.coordinator.items.map(\.id) == sourceIDs,
+                   "A retained failed single image allowed collection acquisition, composition, deletion or copying")
+        h.coordinator.showPanel()
+        single.discard()
+        try expect(h.coordinator.canEdit && h.coordinator.contentRevision == content
+                   && ObjectIdentifier(h.coordinator.assets[0].image) == originals[0]
+                   && ObjectIdentifier(h.coordinator.assets[1].image) == originals[1],
+                   "Discarding only the single image damaged or failed to re-enable the collection")
+
+        single.begin(); singleUI.selected?(try h.selection()); await single.waitForWorker()
+        let singleProblem = single.problem, singleCaptures = singleCapture.calls
+        let collectionBytes = h.coordinator.retainedImageBytes, previousWrites = h.clipboard.calls
+        try expect(single.hasRetainedImage && !single.isWorking && h.coordinator.canEndSession
+                   && !h.coordinator.canEdit && !h.coordinator.canCopy,
+                   "A retained single retry unexpectedly permitted collection editing or blocked explicit ending")
+        #if DEBUG
+        try expect(single.hasRetainedPNG, "Single end-session precondition has no retained PNG")
+        #endif
+        // The fake service must also relinquish its last collection fixture, just as the real
+        // service does. Only coordinator/UI image retention belongs in this shared estimate.
+        h.capturer.nextAsset = try M0ImageFixture.make(index: 3, width: 1, height: 1)
+        h.coordinator.discard()
+        try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty && h.coordinator.completed == nil
+                   && h.coordinator.retainedImageBytes < collectionBytes && single.hasRetainedImage
+                   && single.phase == .failure && single.problem == singleProblem
+                   && singleCapture.calls == singleCaptures && h.clipboard.calls == previousWrites,
+                   "Explicit collection ending failed to release its budget or changed the retained single image")
+        #if DEBUG
+        try expect(single.hasRetainedPNG, "Ending the collection discarded the single PNG cache")
+        #endif
+        h.clipboard.mode = .accepted
+        single.retryCopy(); await single.waitForWorker()
+        try expect(h.clipboard.accepted == 2 && singleCapture.calls == singleCaptures
+                   && !single.hasRetainedImage && !h.coordinator.isActive,
+                   "The retained single image could not retry after collection ending without recapture")
+    }
+
+    @MainActor
+    static func testReplacementDecisionFences() async throws {
+        for unavailable in 0..<3 {
+            for decision in 0..<3 {
+                let h = try Harness(); defer { h.cleanUp() }
+                try await h.add()
+                h.capturer.nextAsset = try M0ImageFixture.make(index: 2, width: 20, height: 12)
+                h.coordinator.replace(at: 0); try h.select(width: 20, height: 12)
+                await h.coordinator.waitForWorker()
+                guard let pending = h.coordinator.pendingReplacement else { throw Failure(description: "Missing fenced replacement") }
+                switch unavailable {
+                case 0: h.interface.environmentAvailable = false
+                case 1: h.permissions.allowed = false
+                default: h.permissions.protectedData = false
+                }
+                switch decision {
+                case 0: h.coordinator.acceptReplacement(id: pending.id)
+                case 1: h.coordinator.keepOriginalReplacement(id: pending.id)
+                default: h.coordinator.retryReplacement(id: pending.id)
+                }
+                try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty
+                           && h.coordinator.pendingReplacement == nil && h.coordinator.invalidationNotice != nil
+                           && h.clipboard.calls == 0 && !h.slot.isOccupied,
+                           "A replacement decision retained unavailable original/candidate data or copied it")
+            }
+        }
+    }
+
+    @MainActor
+    static func testSingleEntryRetainedFence() async throws {
+        for unavailable in 0..<3 {
+            let h = try Harness(); defer { h.cleanUp() }
+            try await h.add()
+            h.coordinator.preparePreview(); await h.coordinator.waitForWorker()
+            switch unavailable {
+            case 0: h.permissions.allowed = false
+            case 1: h.permissions.protectedData = false
+            default: h.interface.environmentAvailable = false
+            }
+            let admitted = h.coordinator.prepareForSingleCapture()
+            try expect(admitted == (unavailable != 2) && !h.coordinator.isActive
+                       && h.coordinator.assets.isEmpty && h.coordinator.completed == nil
+                       && h.coordinator.pendingReplacement == nil && h.coordinator.invalidationNotice != nil
+                       && h.permissions.requestCalls == 0 && h.clipboard.calls == 0 && !h.slot.isOccupied,
+                       "Single entry retained unavailable collection data, requested permission, or used the wrong admission result")
+        }
+
+        let fresh = try Harness(); defer { fresh.cleanUp() }
+        fresh.permissions.allowed = false
+        let singleUI = FakeInterface(), singleCapture = FakeCapture(asset: try M0ImageFixture.make(index: 4, width: 16, height: 16))
+        let single = fresh.makeSingle(interface: singleUI, capturer: singleCapture)
+        defer { single.stop(); singleCapture.releaseIfPending() }
+        single.prepareExternalCapture = { fresh.coordinator.prepareForSingleCapture() }
+        single.begin()
+        try expect(single.phase == .permission && singleUI.permissionCalls == 1
+                   && singleCapture.calls == 0 && fresh.permissions.requestCalls == 0
+                   && !fresh.coordinator.isActive && fresh.coordinator.invalidationNotice == nil,
+                   "An inactive collection blocked the single mode's explicit first permission guidance")
+
+        let empty = try Harness(); defer { empty.cleanUp() }
+        try await empty.add(); try empty.delete(at: 0)
+        let session = empty.coordinator.sessionID
+        empty.permissions.allowed = false; empty.permissions.protectedData = false
+        try expect(empty.coordinator.prepareForSingleCapture() && empty.coordinator.sessionID == session
+                   && empty.coordinator.assets.isEmpty && empty.coordinator.invalidationNotice == nil,
+                   "An empty edited collection blocked single entry or invented a retained-image loss")
     }
 
 }
