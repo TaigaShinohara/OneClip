@@ -2,9 +2,14 @@
 
 ## Unreleased
 
-- 保存・注釈・単発・収集の失効を共通化し、実workerの返却、完成PNG・候補・小画像・退役UIの保持を同じ画像予算へ算入。
-- 保存と編集用copyは安全なFD・所有者・ACL・同一性確認と排他的publishで扱い、既存fileの上書きと旧完了の採用を拒否。標準Previewを固定パスとApple署名で検証。
-- 通知源・監視backendの内部差替え、既定offの有界・固定code診断、保存・注釈を含む遅い結果と表示の回帰試験を追加。
+- 通知源と監視backendを差し替えられる統合配線、既定offの有界・固定code診断、保持・表示・遅い結果の回帰試験を追加。
+- 架空素材の有限資源診断と事前基準、本人開始式の実OS試験、公開履歴・配布物の値非表示点検を再実行可能にした。
+- Release署名前にdebugging symbolを除去し、実行物にビルド元directoryを残さないための検証を追加。
+- 自動保存と注釈を同じ失効経路へ統合。Annotation・Result・単発・収集の保持、候補、完成PNG、実workerと退役UIを共有予算へ含め、古い完了による再表示・コピーを防ぐ。
+- private archiveのFD・owner・ACL・非symlink・容量・同一byte検証を追加し、保存や編集copyの競合・置換を拒否。依頼済みの保存ファイルは失効後も維持する。
+- thumbnailの独立RGBA化と編集copyをbackground workerへ移し、実返却までgateを維持。標準Previewは固定OS appの署名・識別を検査し、古いopen intentや遅いerrorを失効させる。
+- 注釈の読込みをbounded FD snapshotへ固定し、ImageIOのURL再openを廃止。encoded snapshot/bridge・normalizeを計上し、取消後の画像・vector・旧PNGと生の依存先errorの利用を防ぐ。
+- 本人開始式Runtimeへ同一processの明示回復を追加し、親も実SCK・PNG・専用board・worker返却のtraceを照合。失効観測だけでは合格に数えず、実OS・実表示・最低OS/Intel等の未実証を維持。
 
 - 単発撮影とまとめ完成コピー時にPNGを自動保存し、コピーと保存の成否を別々に表示。収集中の個別素材は保存・コピーしない。
 - 画面右下へ8秒間の非アクティブな小画像を表示し、最新画像の注釈・保存フォルダ表示をメニューへ追加。
@@ -34,4 +39,4 @@
   任意のショートカット設定、キーボードでの範囲調整。
 - 開発中の先行ソース公開。安定性・使いやすさの確認（M4）は未完了で、
   対象Collection VoiceOverは未実証。最小OS実機・Intel等の制約は[README](README.md)を参照。
-- 一般向けアプリ配布・署名・公証は含まない。ソース公開をM4・M5全体の完了とは扱わない。
+- 先行ソース公開そのものは一般向けアプリ配布を含まない。署名・公証は候補ごとの別検証として扱い、ソース公開をM4・M5全体の完了とは扱わない。

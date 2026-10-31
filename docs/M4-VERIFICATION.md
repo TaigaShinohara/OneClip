@@ -144,6 +144,57 @@ Developer ID署名の成功は、公証・stapled ticket・Gatekeeperの新規�
 
 この結果は当該候補の公証・ticket・Gatekeeperのpreflightです。新規環境でquarantine付きの実起動、offline初回起動、最低OS／Intel実機、全OS遷移matrix、資源総合は未実証のままです。M4総合・Collection VoiceOver・一般向け配布の受入へ拡張しません。
 
+## 全体セキュリティ受入harnessの追加（2026-10-31）
+
+開始公開mainは`062f1bd1129d0286f4696fec612db5f6d6593050`です。要件と試験・有限基準の対応は
+[セキュリティ限定受入](SECURITY-ACCEPTANCE.md)に記録しました。以下はmacOS27.2／Apple Siliconの当該Macの結果です。
+既存の成功・失敗を上書きせず、実装、限定実機、宣言環境全体を別に判定します。
+
+### 実装と決定的試験
+
+- 通知源・monitor backendを内部依存として差し替え、通常のNative配線を使う統合試験を追加しました。
+  通常起動はlive・診断off、試験は専用通知centerと架空backendです。Releaseの遠隔操作口はありません。
+- 固定enumと相対単調時刻だけを受け取る8,192件上限のメモリtraceを、通知からcoordinator、実SCK callback、
+  画像worker、表示、同期writerへ接続しました。画像・窓名・UID・clipboard本文・OSの生error文は記録しません。
+- 非GUIのSwift 15スイートが成功しました。画像24群、単発40群、収集38群を含み、収集の保持matrixは
+  9イベント×3コピー状態×候補有無×表示有無の108条件、遅延結果36条件です。統合試験8群には
+  Native配線の18保持・72遅延条件、monitor障害・世代・poll先行・trace上限を含みます。
+- 範囲の独立整数pixel oracleは1x/2x・負座標・縦配置を含む架空座標1,024条件が成功しました。
+  設定窓metadata 5群、境界外での確定拒否、同期prepare/writeの成功・競合・拒否も成功しました。
+  架空座標の成功を、未保有の表示構成の実撮影成功にしません。
+- 専用の新しいnamed pasteboardへproducerが架空PNGを書き、producer終了後に別consumerが受領する試験が成功しました。
+  一般clipboardは読み出し・退避・復元・自動試験していません。
+- `--sampling-oracle`のalpha対照14件とflat color resampling 4条件が画面外で成功しました。
+  新しい比較窓・画像は表示していません。
+
+### 失敗・未成立を維持する項目
+
+| 項目 | 判定と再開条件 |
+| --- | --- |
+| 実NSPanel/SwiftUI表示matrix | `NOT_ESTABLISHED`。部分進行後に前面appの変化／不明で停止。実表示・追加の架空窓表示・実SCK診断は未実施。部分成功を全162条件の成功にしない |
+| 実SCKの1px境界 | `FAIL`。full crop成功後、1physical pixelのcropが架空不透明素材と不一致。opaque paddingを加えた別cellも不一致。原因未確定で、sampling診断の実行は表示試験再開後。画像/RGB値の保存なし |
+| cold製品Viewと応答 | `FAIL`。画像なしの初回空View経路が約807ms、MainActor heartbeat最大861,439,375nsで250msを超え、calibrationを停止。画像処理は未開始。warmup後30cycleの各処理が短くてもcold失敗を取り消さない |
+| 旧約69MB増加の原因 | 未解明。所有参照の解放とRSS/footprintの累積を別判定とし、後の安定観測だけで旧増加を解決扱いにしない |
+| 実OS 32cellと明示回復 | `NOT_ESTABLISHED`。この時点ではRuntimeは失効の限定観測までで、復帰後の実撮影は未実装。失効だけをfull cell成立へ数えず、後続で同一processの明示回復経路を追加。実OS試行自体は未開始 |
+| 一般clipboard手動貼付 | `NOT_ESTABLISHED`。本人が既存内容を必要に応じて退避した後、架空1枚/4枚をローカルへ手動貼付し、終了後の寿命まで確認する |
+
+### ビルド・公開面と成果物の対応
+
+Debugの署名なしbuildと、arm64/x86_64のDeveloper ID Release buildが成功しました。Releaseは署名前に
+debugging symbolsをstripし、実binaryのソースdirectory記録と個人用絶対path候補が0であることを確認しました。
+この局所対策は既存の公証済みappを書き換えていません。新候補の実署名preflightは成功していますが、
+新しい製品コードに旧候補の公証を流用せず、新候補のApple提出・stapleは未実施です。一般公開はしていません。
+
+公開refsから到達する履歴・著者metadataと、PR・Release・Actions等を範囲明示して点検しました。
+未知形式の秘密値や未取得surfaceを検査済みとはしません。内部の生log・binary・署名者情報は公開文書と分離します。
+
+独立レビューで、試験子processのwait中断時cleanup、失効のみでfull cellへ加算される判定、失効後の新しい撮影・
+権限要求の企図の見落としを発見し、誤PASS防止の局所修正と回帰を追加しました。
+製品差分に新たな重大な問題が見つからなかったことを、未実証条件の合格へ拡張しません。
+
+最低OS14.0/14.1/14.2以降・各対象メジャー・Intel実機、未保有表示、FUS/TCC、新規quarantine付きonline/offline初回、
+upgrade/rollbackは必須残件です。M4総合・対象Collection VoiceOverの保留は継続します。
+現時点で実装・自動検証の全工程、当該Macの限定受入、対応宣言全体のいずれも全体完了にはしていません。
 ## 撮影後プレビュー・自動保存の個別改善（2026-10-31）
 
 公開ソース`062f1bd`を基準に、単発撮影とまとめの完成コピーへPNG自動保存と右下の小画像を追加しました。
@@ -171,3 +222,83 @@ Developer ID署名の成功は、公証・stapled ticket・Gatekeeperの新規�
 - 既存のPython37試験、Xcode設定・差分の検査、署名なしuniversal Release（arm64／x86_64）ビルドが成功しました。AppIntents未使用に伴うメタデータ抽出省略warningが1件ありました。
 
 自作windowの直接描画fixtureは透明／単色の画像となり、表示確認としては不成立でした。空画像を拒否する検査を追加しました。別のUI観察ツールもtimeoutのため、実際の画面の収まり・日本語IME入力・マウス操作・フォーカス・長画像の閲覧は未確認です。実画面取得、一般クリップボード、権限変更、署名・公証、普段使いアプリへの差し替えは実施していません。
+
+
+<a id="security-integrated-2eb97e0-20261031"></a>
+## 自動保存・注釈を保ったセキュリティ統合（2026-10-31）
+
+開始版`062f1bd`、自動保存の公開版`72c0d2a`、注釈の公開版`2eb97e0`の機能を保持し、保存・注釈も全体の安全確認へ含めました。
+`2eb97e0`は取り込んだ公開履歴の基準です。この節の局所修正や候補が同commitですでに公開済みという意味ではありません。
+前の節にある各版の試験・公証結果と、失敗・未実証の記録はそのまま残します。
+要件はR13/R14、T13/T14、D15/D16および[セキュリティ限定受入](SECURITY-ACCEPTANCE.md)へ対応付けます。
+
+### 統合した安全条件と自動検証
+
+- Nativeの通知・CG/SC監視は、Annotation→Result→単発→収集の同一sinkへ同期配送します。
+  試験initは実singleton・hotkey・通常の保存先へ接続せず、private通知centerと明示した依存だけを使います。
+- 保存先はprivate modeとowner/ACLを検査するdirectory FDで固定します。上書きやsymlinkへの迂回を拒否し、
+  編集元・cache再利用はregular fileの同一性・容量・全byteを検査します。以前依頼した保存・編集copyは失効後も永続化し、
+  pending/thumbnailと古い完了の採用を別に止めます。
+- 保存・thumbnail生成・編集copyのdisk I/Oはbackground workerで実行します。thumbnailは最大480pxの独立RGBA bitmapへcopyし、
+  decoder/context/outputの3領域と退役UI借用を計上します。保存/編集workerのgateと予約を実返却まで保ち、
+  非表示後の新しい明示操作による編集と、処理中の非表示・失効による古いopenの拒否を区別します。
+- Annotationはsafe FDからbounded PNG snapshotを読み、ImageIOへURLを再openさせません。encoded snapshotとbridge、
+  decode/normalize、元画像・出力・PNG・vector/履歴を検査し、4ownerの保持・候補・完成物・実worker予約を同じ384MiBへ合算します。
+  await後の外部保持量と世代を再検査し、失効後の画像・vector・Undo/Redo・旧PNGを利用しません。
+- 非GUI Swiftは20スイートが成功しました。単発43群、収集43群、Result14群、Archive14群、
+  Annotation renderer8群・controller14群、Environment13群と、残る13スイートを含みます。
+  架空PNG・一時archive・fakeまたは専用pasteboardだけを使い、実画面・一般clipboard・実Preview起動で代替していません。
+- Environmentには実Resultの9経路×両modeの18ケースと、実Annotationの9経路×load/renderの18ケースを含みます。
+  後者は実FD読込み／実描画の後で制御gateを置く混合試験です。実worker返却前のgate、画像・vector・PNGの棄却、
+  新規書込み・旧完了採用の抑止と元fileの存続を確認しました。実OS遷移・実panel表示・IMEの証拠ではありません。
+- Python128件と`tools-v6`自己試験の基準実行を保持した後、回復時の`captureCallback`と`captureReturned`に両方ともsuccessを要求しました。
+  両mode×2event×failure/noneの8条件を追加し、最終Python129件（Runtime親46件を含む）が成功しました。
+  最終`tools-v7`のRuntime `--self-test`も成功し、source IDは`0b69fbdfd39762832d48c1a0daf74da7292ec194`、
+  Runtime binary SHA-256は`32fb93d02ead2b2acc8285e421a01f4cf76e45152cfddbe5b62a5bd7d3aa733d`です。
+- 本体と直接回帰は[PR #9](https://github.com/TaigaShinohara/OneClip/pull/9)でmerge済みです。
+  作業commit `349c5d34346be6f6a8648edda97b4602a2890aac`、merge commit `607fd35611089d309a3ceb957bb147e26b755211`。
+  GitHubの全30fileのpatchを再構成して作業commitに一致、merge後treeも同一と確認しました。
+  個人Git設定・credential helper・認証環境を引き継がない公開cloneからunsigned Debug arm64 buildが成功しました。
+  これは今回のMacでのbuild証拠であり、別Mac・fresh OS・Intel実行の受入ではありません。
+
+注釈結合の最初の実行は、元fileと列挙結果のURL値そのものを比較するoracleで失敗しました。
+同じfileでもbase URL等の表現が異なることを固定predicateで切り分け、canonical path、device/inode、owned regular file、
+元PNGとのbyte一致を要求する検査へ修正しました。修正後のEnvironment13群は成功しています。
+初回の失敗は内部証拠として保持し、file同一性・内容・上限の条件を緩めて合格にしたとは扱いません。
+
+### 同じ製品入力に対応する候補
+
+| 記録 | 結果・識別 |
+| --- | --- |
+| 製品build入力のSHA-256 | `a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08` |
+| 署名app manifest SHA-256 | `26d5e12da850192d4240f5f4a547ab1c2fb66dd9f9f459b8634164b922ef4e11` |
+| 候補ZIP SHA-256 | `31757ca5f336d7f6bc845ee2a758590416c3e408af68fab3efea00f23328c5f1`（1,323,115 bytes） |
+| ビルドと署名preflight | 署名なしDebugとDeveloper IDのuniversal Releaseが成功。ZIP再展開後も同じapp manifestで検証成功 |
+| 最低OS設定 | 両architectureのload commandが14.0、SDKが27.2であることを確認。macOS14実行・Intel実機の代替ではない |
+| 新候補の公証・staple | 未実施。独立照合と候補固定の後に扱う。旧候補のAcceptedを新しい製品入力へ流用しない |
+| インストール・一般配布 | 未実施 |
+
+製品入力・署名app・ZIPの対応と、内部の試験log・署名者情報を分離して保存します。
+この表は配布物の初回起動・quarantine・offline起動の成功を意味しません。
+
+### 維持する失敗・未実証と受入判定
+
+| 項目 | 現在の判定 |
+| --- | --- |
+| RSS/footprintの累積・取消回復の有限受入 | 未完了。旧約69MB増加の原因は未解明。追加保存・注釈のscalar予算試験をprocess全体の資源合格へ広げない |
+| cold UIとheartbeat | 先行計測の`FAIL`を維持。最大861,439,375nsと250ms基準の超過を除外・緩和しない |
+| 実SCK 1px crop | `FAIL`を維持。元の不一致とpadding別cellの不一致を、画面外oracleや新しいbuildで解消扱いにしない |
+| 実GUI・追加fixture／sampling | 本人の「表示試験は後で行う」に従い延期。通常panel、注釈表示、IME・フォーカス・操作の受入は未実証 |
+| 実OS32cellと明示回復 | `NOT_ESTABLISHED`。同一processの明示回復buttonとtrace検証を実装・自己試験したが、本人のlock/sleep試行は未開始 |
+| 一般clipboardの手動貼付 | 未実施。本人による架空1枚/4枚の貼付と終了後の寿命確認を専用board試験で代替しない |
+| macOS14・Intel・中間OS・未保有表示 | 必須残件。universal build・API availability・架空座標試験で実行成功を代替しない |
+| FUS/TCC、新規quarantine付きonline/offline初回、upgrade/rollback、別環境clone→build | 指定環境・本人の再開条件が満たされるまで必須残件として保持 |
+| M4総合・対象Collection VoiceOver・一般向け配布 | 保留・未完了を維持 |
+
+Runtimeは新しい本人操作より前に撮影や権限要求を自動再開せず、旧失効区間と新しい実SCK/PNG/専用board/worker返却を別に検査します。
+親ledger v2はbinary manifestとparent runnerのhashを固定し、過去PASSの証拠も再読込します。
+`archive_exercised=false`、`annotation_exercised=false`、`product_image_view_exercised=false`を維持するため、
+Runtimeの成功を保存・注釈・通常Viewの実OS受入へ拡張しません。
+
+列挙した局所修正と自動試験の成功、当該Macの限定実機受入、宣言環境全体の受入は別判定です。
+未解決の資源基準、実SCKの失敗、本人延期と未保有環境が残るため、計画全体は未完了です。
