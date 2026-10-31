@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- 配布preflightがGatekeeperの実raw plistキーを読み取れるよう修正し、不正なキー・source・verdictを拒否する回帰試験を追加。
 - 単発・収集の画像workerへ取消を明示伝播し、描画・PNG生成の安全な区切りで中止を確認。実worker終了まで共有枠を保持する。
 - コピー後の素材・取り直し候補・遅い成功／失敗を含む失効matrixと、配布候補の署名者・最小権限・成果物hashを照合するpreflightを追加。
 - ロック通知、画像参照の解放、OS・貼付先が保持するコピーの保証境界を説明。
