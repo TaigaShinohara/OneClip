@@ -64,8 +64,12 @@ class FakeTools:
         self.enabled = b"assessments enabled\n"
         self.assessment = plistlib.dumps({
             "assessment:verdict": True,
-            "assessment:authority": {"source": "Notarized Developer ID"},
-            "assessment:originator": PRIVATE_DIAGNOSTIC,
+            "assessment:authority": {
+                "assessment:authority:flags": 2,
+                "assessment:authority:row": 11,
+                "assessment:authority:source": "Notarized Developer ID",
+            },
+            "assessment:remote": True,
         })
 
     def __call__(self, arguments):
@@ -358,10 +362,10 @@ class DistributionVerificationTests(unittest.TestCase):
 
     def test_policy_assessment_requires_real_notarized_boolean_verdict(self):
         fixtures = [
-            {"assessment:verdict": False, "assessment:authority": {"source": "Notarized Developer ID"}},
-            {"assessment:verdict": "true", "assessment:authority": {"source": "Notarized Developer ID"}},
-            {"assessment:verdict": True, "assessment:authority": {"source": "Developer ID"}},
-            {"assessment:verdict": True, "assessment:authority": {"source": "User Defined"}},
+            {"assessment:verdict": False, "assessment:authority": {"assessment:authority:source": "Notarized Developer ID"}},
+            {"assessment:verdict": "true", "assessment:authority": {"assessment:authority:source": "Notarized Developer ID"}},
+            {"assessment:verdict": True, "assessment:authority": {"assessment:authority:source": "Developer ID"}},
+            {"assessment:verdict": True, "assessment:authority": {"assessment:authority:source": "User Defined"}},
             {},
         ]
         for payload in fixtures:
@@ -369,6 +373,49 @@ class DistributionVerificationTests(unittest.TestCase):
             self.assert_failed(self.verify("distribution"))
         self.tools.assessment = b"<?xml version='1.0'?><plist><dict>"
         self.assert_failed(self.verify("distribution"))
+
+    def test_gatekeeper_raw_public_schema_accepts_namespaced_source(self):
+        # Shape from Apple's SecAssessment keys and actual spctl --raw output.
+        # Public classifications only: no originator, path, or signer identity.
+        self.tools.assessment = plistlib.dumps({
+            "assessment:authority": {
+                "assessment:authority:flags": 2,
+                "assessment:authority:row": 11,
+                "assessment:authority:source": "Notarized Developer ID",
+            },
+            "assessment:remote": True,
+            "assessment:verdict": True,
+        })
+        self.assertEqual(self.verify("distribution")["status"], "passed_distribution_preflight")
+
+    def test_gatekeeper_bare_source_alias_and_misspelled_keys_fail_closed(self):
+        for key in ("source", "assessment:source", "assessment:authority:soruce"):
+            with self.subTest(key=key):
+                self.tools.assessment = plistlib.dumps({
+                    "assessment:authority": {key: "Notarized Developer ID"},
+                    "assessment:remote": True,
+                    "assessment:verdict": True,
+                })
+                result = self.verify("distribution")
+                self.assert_failed(result)
+                self.assertEqual(result["failure"], "notarized_policy_verdict_required")
+
+    def test_gatekeeper_canonical_source_type_value_and_verdict_are_strict(self):
+        for source in ("Developer ID", "User Defined", "notarized developer id",
+                       "Notarized Developer ID ", True, ["Notarized Developer ID"]):
+            with self.subTest(source_type=type(source).__name__):
+                self.tools.assessment = plistlib.dumps({
+                    "assessment:authority": {"assessment:authority:source": source},
+                    "assessment:verdict": True,
+                })
+                self.assert_failed(self.verify("distribution"))
+        for verdict in (False, "true", 1, 0):
+            with self.subTest(verdict_type=type(verdict).__name__):
+                self.tools.assessment = plistlib.dumps({
+                    "assessment:authority": {"assessment:authority:source": "Notarized Developer ID"},
+                    "assessment:verdict": verdict,
+                })
+                self.assert_failed(self.verify("distribution"))
 
     def test_each_universal_slice_has_its_own_metadata_and_entitlement_checks(self):
         self.executable.write_bytes(universal())

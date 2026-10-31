@@ -72,6 +72,9 @@ python3 scripts/verify_distribution.py --app 'path/to/OneClip.app' \
 
 配布にはDeveloper ID、Hardened Runtime、secure timestamp、必要最小限の実entitlements、
 `get-task-allow`非true、公証結果とlog、staple済みticket、Gatekeeperの確認を同じ最終成果物へ結び付けます。
+Gatekeeperのraw plistは、Booleanの`assessment:verdict`と、`assessment:authority`内の
+`assessment:authority:source`が`Notarized Developer ID`であることを厳密に確認します。
+キー名は[Appleの定義](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/SecAssessment.cpp#L122-L131)と実tool応答に照合し、短縮した`source`等を代替として受け入れません。
 公証投入物、staple後のapp/container、最終配布物のhashは区別します。
 ZIPはstapleしたappから作り、ticket付きDMG/PKGを作り直した場合は必要な検証へ戻ります。
 quarantineを除いたりGatekeeperを無効にしたりして合格を代替しません。
