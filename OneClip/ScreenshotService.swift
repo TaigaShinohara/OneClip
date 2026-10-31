@@ -161,25 +161,31 @@ struct SingleCaptureRequest {
     let operationID: UUID
     let budget: CaptureImageBudgetContext
     let settings: SettingsCaptureScope?
+    let securityTrace: CaptureSecurityTrace
+    let traceMode: CaptureSecurityTrace.Mode
     #if DEBUG
     let practice: PracticeCaptureScope?
 
     init(selection: CaptureSelection, operationID: UUID, budget: CaptureImageBudgetContext = .init(),
          settings: SettingsCaptureScope? = nil,
-         practice: PracticeCaptureScope? = nil) {
+         practice: PracticeCaptureScope? = nil,
+         securityTrace: CaptureSecurityTrace = .disabled, traceMode: CaptureSecurityTrace.Mode = .single) {
         self.selection = selection
         self.operationID = operationID
         self.budget = budget
         self.settings = settings
         self.practice = practice
+        self.securityTrace = securityTrace; self.traceMode = traceMode
     }
     #else
     init(selection: CaptureSelection, operationID: UUID, budget: CaptureImageBudgetContext = .init(),
-         settings: SettingsCaptureScope? = nil) {
+         settings: SettingsCaptureScope? = nil,
+         securityTrace: CaptureSecurityTrace = .disabled, traceMode: CaptureSecurityTrace.Mode = .single) {
         self.selection = selection
         self.operationID = operationID
         self.budget = budget
         self.settings = settings
+        self.securityTrace = securityTrace; self.traceMode = traceMode
     }
     #endif
 }
@@ -314,9 +320,14 @@ final class ScreenshotService: ScreenshotCapturing {
         try validate(request, isCurrent: isCurrent)
         let scale = Double(filterScale)
         let asset: M0ImageAsset
+        let trace = request.securityTrace
+        let traceMode = request.traceMode
         do {
             asset = try await withCheckedThrowingContinuation { continuation in
+                trace.record(.captureRequested, mode: traceMode, phase: .capturing)
                 SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration) { image, error in
+                    trace.record(.captureCallback, mode: traceMode, phase: .capturing,
+                                 outcome: error == nil && image != nil ? .success : .failure)
                     guard error == nil, let image else {
                         continuation.resume(throwing: ScreenshotError.captureFailed)
                         return
@@ -326,9 +337,11 @@ final class ScreenshotService: ScreenshotCapturing {
                 }
             }
         } catch {
+            trace.record(.captureReturned, mode: traceMode, phase: .capturing, outcome: .failure)
             try validate(request, isCurrent: isCurrent)
             throw ScreenshotError.captureFailed
         }
+        trace.record(.captureReturned, mode: traceMode, phase: .capturing, outcome: .success)
         try validate(request, isCurrent: isCurrent)
         guard asset.image.width == plan.pixelWidth, asset.image.height == plan.pixelHeight else {
             throw ScreenshotError.unexpectedImageSize
@@ -411,7 +424,7 @@ final class ScreenshotService: ScreenshotCapturing {
         return values.allSatisfy { $0.isFinite && abs($0) <= 0.000_001 }
     }
 
-    fileprivate static func quartzFrame(for appKitFrame: CGRect) throws -> CGRect {
+    static func quartzFrame(for appKitFrame: CGRect) throws -> CGRect {
         guard let primary = NSScreen.screens.first else { throw ScreenshotError.displayChanged }
         return CGRect(x: appKitFrame.minX, y: primary.frame.maxY - appKitFrame.maxY,
                       width: appKitFrame.width, height: appKitFrame.height)

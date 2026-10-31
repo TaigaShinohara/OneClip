@@ -4,6 +4,12 @@ import Foundation
 import SwiftUI
 
 @MainActor
+private final class AnnotationImageBorrow {
+    weak var image: CGImage?
+    init(_ image: CGImage) { self.image = image }
+}
+
+@MainActor
 final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDelegate {
     static let shared = CaptureAnnotationController()
     @Published private(set) var image: M0ImageAsset?
@@ -17,8 +23,23 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     @Published private(set) var statusText = ""
 
     var canOpen: @MainActor () -> Bool = { true }
-    var externalRetainedBytes: @MainActor () -> Int = { 0 }
+    var externalRetainedBytes: @MainActor () throws -> Int = { 0 }
     var blocksCapture: Bool { isOpen || isWorking }
+    let securityTrace: CaptureSecurityTrace
+    private let limits: M0ImageLimits
+    private let loader: @Sendable (URL, M0ImageLimits, Int) throws -> M0ImageAsset
+    private let renderer: @Sendable (M0ImageAsset, [CaptureAnnotation], M0ImageLimits, Int) throws -> M0CompositionResult
+    private var workerImageBytes = 0
+    private var retiredImages: [AnnotationImageBorrow] = []
+    private var retiredImageBytes: Int {
+        (try? CaptureRetainedImageBudget.images(retiredImages.compactMap(\.image))) ?? Int.max
+    }
+    var retainedImageBytes: Int {
+        do {
+            let current = try image.map { try Self.ownerBytes($0) } ?? 0
+            return try CaptureRetainedImageBudget.sum(retiredImageBytes, max(current, workerImageBytes))
+        } catch { return Int.max }
+    }
     var selectedAnnotation: CaptureAnnotation? { annotations.first { $0.id == selectedID } }
     var hasDraftChanges: Bool {
         if pendingCommentPoint != nil { return !commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -49,11 +70,18 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     init(results: CaptureResultController = .shared,
          clipboard: any CaptureClipboardWriting = GeneralCaptureClipboard(),
          showsWindow: Bool = true,
-         environmentCheck: @escaping @MainActor () -> Bool = { NativeCaptureInterface.shared.validateCaptureEnvironment() }) {
+         environmentCheck: @escaping @MainActor () -> Bool = { NativeCaptureInterface.shared.validateCaptureEnvironment() },
+         securityTrace: CaptureSecurityTrace = .disabled, limits: M0ImageLimits = .init(),
+         loader: (@Sendable (URL, M0ImageLimits, Int) throws -> M0ImageAsset)? = nil,
+         renderer: (@Sendable (M0ImageAsset, [CaptureAnnotation], M0ImageLimits, Int) throws -> M0CompositionResult)? = nil) {
         self.results = results
         self.clipboard = clipboard
         self.showsWindow = showsWindow
         self.environmentCheck = environmentCheck
+        self.securityTrace = securityTrace
+        self.limits = limits
+        self.loader = loader ?? { try CaptureAnnotationRenderer.load(from: $0, limits: $1, retainingExtraBytes: $2) }
+        self.renderer = renderer ?? { try CaptureAnnotationRenderer.render(image: $0.image, annotations: $1, limits: $2, retainingExtraBytes: $3) }
         super.init()
         resultSubscription = results.objectWillChange.sink { [weak self] _ in
             MainActor.assumeIsolated { self?.objectWillChange.send() }
@@ -78,29 +106,54 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         operationID = UUID()
         contentID = UUID()
         let identifier = operationID
-        let extra = externalRetainedBytes()
+        let extra: Int
+        do {
+            extra = try additionalRetainedBytes()
+            guard limits.maximumImageBytes > 0, extra < limits.maximumImageBytes else { throw M0ImageError.memoryLimit }
+            // The PNG's dimensions/stride are not known before the safe metadata read. Reserve
+            // the available finite capacity; the loader checks each allocation against it.
+            workerImageBytes = limits.maximumImageBytes - extra
+        } catch {
+            statusText = "画像を開く作業領域を確保できませんでした。ほかの処理が終わってから再試行してください。"
+            return false
+        }
+        let loadingOperation = loader
+        let workerLimits = limits
+        let trace = securityTrace
+        trace.record(.annotationOpened, mode: .annotation, phase: .capturing)
         isOpen = true
         isWorking = true
         statusText = "画像を開いています…"
         showWindow()
         worker = Task { [weak self] in
             guard let self else { return }
-            defer { self.worker = nil; self.isWorking = false }
+            trace.record(.workerStarted, mode: .annotation, phase: .capturing)
+            defer { self.finishWorker(phase: .capturing) }
             do {
+                guard self.isCurrent(identifier) else { return }
                 let loading = Task.detached(priority: .userInitiated) {
-                    try Task.checkCancellation()
-                    let asset = try CaptureAnnotationRenderer.load(from: url, retainingExtraBytes: extra)
-                    try Task.checkCancellation()
-                    return asset
+                    do {
+                        try Task.checkCancellation()
+                        let asset = try loadingOperation(url, workerLimits, extra)
+                        try Task.checkCancellation()
+                        trace.record(.annotationLoaded, mode: .annotation, phase: .capturing, outcome: .success)
+                        return asset
+                    } catch {
+                        trace.record(.annotationLoaded, mode: .annotation, phase: .capturing, outcome: .failure)
+                        throw error
+                    }
                 }
                 let asset = try await withTaskCancellationHandler(operation: { try await loading.value }, onCancel: { loading.cancel() })
+                self.workerImageBytes = (try? Self.ownerBytes(asset)) ?? Int.max
                 guard self.isCurrent(identifier) else { return }
-                _ = try CaptureAnnotationRenderer.makePlan(image: asset.image, annotations: [], retainingExtraBytes: self.externalRetainedBytes())
+                _ = try CaptureAnnotationRenderer.makePlan(image: asset.image, annotations: [], limits: self.limits,
+                    retainingExtraBytes: self.additionalRetainedBytes())
                 self.image = asset
+                trace.record(.annotationResultAdopted, mode: .annotation, phase: .capturing)
                 self.statusText = "画像上で位置を選び、コメントを書いてください。矢印・囲み・番号も追加できます。"
             } catch {
                 guard self.operationID == identifier, self.isOpen else { return }
-                self.statusText = "画像を開けませんでした。\(error.localizedDescription)"
+                self.statusText = "画像を開けませんでした。" + Self.failureText(error)
             }
         }
         return true
@@ -127,7 +180,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             note = try canonicalized(note)
             try commit(annotations + [note])
             selectID(note.id)
-        } catch { statusText = error.localizedDescription }
+        } catch { statusText = Self.failureText(error) }
     }
 
     func applyComment() { _ = finishDraft() }
@@ -160,7 +213,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             }
             statusText = "コメントを追加しました。必要な記号を加えて「保存してコピー」できます。"
             return true
-        } catch { statusText = error.localizedDescription; return false }
+        } catch { statusText = Self.failureText(error); return false }
     }
 
     func select(at point: CGPoint) {
@@ -188,7 +241,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             next[index] = try canonicalized(next[index])
             try validate(next)
             annotations = next
-        } catch { statusText = error.localizedDescription }
+        } catch { statusText = Self.failureText(error) }
     }
     func endMove() {
         defer { moveStart = nil }
@@ -203,7 +256,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         do {
             try commit(annotations.filter { $0.id != selectedID })
             selectID(nil)
-        } catch { statusText = error.localizedDescription }
+        } catch { statusText = Self.failureText(error) }
     }
     func undo() {
         guard editable(), canUndo, let previous = undoStack.popLast() else { return }
@@ -223,21 +276,57 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         let identifier = operationID
         let exportID = contentID
         let notes = annotations
-        let extra = externalRetainedBytes()
+        let extra: Int
+        do {
+            extra = try additionalRetainedBytes()
+            let plan = try CaptureAnnotationRenderer.makePlan(image: image.image, annotations: notes,
+                limits: limits, retainingExtraBytes: extra)
+            workerImageBytes = plan.estimatedPeakBytes - extra
+        } catch { statusText = "画像を準備できませんでした。" + Self.failureText(error); return }
+        let renderingOperation = renderer
+        let workerLimits = limits
+        let trace = securityTrace
         let expectedCount = clipboard.changeCount
         isWorking = true
         statusText = "コメント・記号を画像にまとめています…"
         worker = Task { [weak self] in
             guard let self else { return }
-            defer { self.worker = nil; self.isWorking = false }
+            trace.record(.workerStarted, mode: .annotation, phase: .encoding)
+            defer { self.finishWorker(phase: .encoding) }
             do {
+                guard self.isCurrent(identifier) else { return }
                 let rendering = Task.detached(priority: .userInitiated) {
-                    try CaptureAnnotationRenderer.render(image: image.image, annotations: notes, retainingExtraBytes: extra)
+                    trace.record(.annotationExportStarted, mode: .annotation, phase: .encoding)
+                    do {
+                        try Task.checkCancellation()
+                        let output = try renderingOperation(image, notes, workerLimits, extra)
+                        try Task.checkCancellation()
+                        trace.record(.annotationExportReturned, mode: .annotation, phase: .encoding, outcome: .success)
+                        return output
+                    } catch {
+                        trace.record(.annotationExportReturned, mode: .annotation, phase: .encoding, outcome: .failure)
+                        throw error
+                    }
                 }
                 let output = try await withTaskCancellationHandler(operation: { try await rendering.value }, onCancel: { rendering.cancel() })
+                self.workerImageBytes = (try? Self.ownerBytes(image, output: output)) ?? Int.max
                 guard self.isCurrent(identifier) else { return }
+                let freshExtra = try self.additionalRetainedBytes()
+                let plan = try CaptureAnnotationRenderer.makePlan(image: image.image, annotations: notes, limits: self.limits,
+                    retainingExtraBytes: freshExtra)
+                guard output.image.width == image.image.width, output.image.height == image.image.height,
+                      output.image.bitsPerComponent == 8, output.image.bitsPerPixel == 32,
+                      output.image.bytesPerRow >= output.image.width * 4,
+                      try CaptureRetainedImageBudget.sum(self.workerImageBytes, freshExtra) <= self.limits.maximumImageBytes else {
+                    throw M0ImageError.memoryLimit
+                }
+                _ = try M0ImageComposer.validateEncodedBytes(plan: plan, pngByteCount: output.pngData.count,
+                    isSingleImage: true, limits: self.limits)
+                trace.record(.annotationResultAdopted, mode: .annotation, phase: .encoding)
                 // Keep the existing conflict checks and use exactly one flattened PNG.
-                let copied = self.clipboard.writePNG(output.pngData, expectedChangeCount: expectedCount)
+                let copied = self.clipboard.writePNG(output.pngData, expectedChangeCount: expectedCount,
+                    securityTrace: trace, mode: .annotation)
+                trace.record(.clipboardOutcome, mode: .annotation, phase: .writing, outcome: copied.writeAccepted ? .accepted : .rejected)
                 self.results.receive(output.pngData, copied: copied.writeAccepted, id: exportID, mode: .annotation)
                 while self.results.isSaving {
                     try await Task.sleep(for: .milliseconds(5))
@@ -254,7 +343,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
                 }
             } catch {
                 guard self.operationID == identifier, self.isOpen else { return }
-                self.statusText = "画像を準備できませんでした。\(error.localizedDescription)"
+                self.statusText = "画像を準備できませんでした。" + Self.failureText(error)
             }
         }
     }
@@ -275,14 +364,19 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     }
 
     func invalidate() {
+        securityTrace.record(.annotationInvalidated, mode: .annotation, outcome: .cancelled)
         operationID = UUID()
         worker?.cancel()
+        retiredImages.removeAll { $0.image == nil }
+        if let image = image?.image, !retiredImages.contains(where: { $0.image === image }) { retiredImages.append(AnnotationImageBorrow(image)) }
         image = nil; annotations = []; savedAnnotations = []
         undoStack.removeAll(); redoStack.removeAll(); moveStart = nil
         selectedID = nil; pendingCommentPoint = nil; commentDraft = ""
         isOpen = false
+        let wasVisible = window?.isVisible == true
         window?.orderOut(nil)
         window?.contentView = nil
+        if wasVisible { securityTrace.record(.annotationViewHidden, mode: .annotation) }
     }
     func waitForWorker() async { await worker?.value }
 
@@ -308,7 +402,8 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     }
     private func validate(_ next: [CaptureAnnotation]) throws {
         guard let image else { return }
-        _ = try CaptureAnnotationRenderer.makePlan(image: image.image, annotations: next, retainingExtraBytes: externalRetainedBytes())
+        _ = try CaptureAnnotationRenderer.makePlan(image: image.image, annotations: next, limits: limits,
+            retainingExtraBytes: additionalRetainedBytes())
     }
     private func commit(_ next: [CaptureAnnotation]) throws {
         try validate(next)
@@ -340,7 +435,29 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             window?.contentView = NSHostingView(rootView: CaptureAnnotationEditorView(controller: self))
         }
         window?.makeKeyAndOrderFront(nil)
+        if window?.isVisible == true { securityTrace.record(.annotationViewShown, mode: .annotation) }
         NSApp.activate(ignoringOtherApps: true)
+    }
+    /// Called only after the real canvas painted its current image; never by headless probes.
+    func recordImageDraw() {
+        if isOpen, image != nil { securityTrace.record(.annotationViewDraw, mode: .annotation) }
+    }
+    private func additionalRetainedBytes() throws -> Int {
+        try CaptureRetainedImageBudget.sum(retiredImageBytes, externalRetainedBytes())
+    }
+    private static func ownerBytes(_ image: M0ImageAsset, output: M0CompositionResult? = nil) throws -> Int {
+        let preview = min(image.image.width, 1_024) * min(image.image.height, 1_024) * 4
+        return try CaptureRetainedImageBudget.sum(CaptureRetainedImageBudget.images(
+            [image.image] + (output.map { [$0.image] } ?? [])), output?.pngData.count ?? 0, preview)
+    }
+    private func finishWorker(phase: CaptureSecurityTrace.Phase) {
+        securityTrace.record(.workerReturned, mode: .annotation, phase: phase)
+        workerImageBytes = 0; worker = nil; isWorking = false
+    }
+    private static func failureText(_ error: any Error) -> String {
+        if let known = error as? CaptureAnnotationError { return known.errorDescription ?? "画像の内容を確認してください。" }
+        if let known = error as? M0ImageError { return known.errorDescription ?? "画像の上限を確認してください。" }
+        return "画像の形式、保存先と空き容量を確認してください。"
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool { _ = requestClose(); return false }
 }
