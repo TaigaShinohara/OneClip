@@ -9,6 +9,7 @@ struct OneClipApp: App {
     @StateObject private var capture = SingleCaptureCoordinator.shared
     @StateObject private var collection = CollectionCaptureCoordinator.shared
     @StateObject private var keys = ProductHotKeyController.shared
+    @StateObject private var result = CaptureResultController.shared
     var body: some Scene {
         MenuBarExtra {
             Text("OneClip — まとめ撮りbeta 開発中")
@@ -16,6 +17,14 @@ struct OneClipApp: App {
             if M2FailureLab.isEnabled || M3FailureLab.isEnabled { Text("安全な試験モード・一般コピーなし") }
             #endif
             Text(capture.statusText)
+            if result.hasPendingSave {
+                Text(result.message)
+                Button(result.isSaving ? "画像を保存中…" : "画像の保存を再試行") { result.retrySave() }.disabled(result.isSaving)
+                Button("保存せずに続ける") { result.discardUnsaved() }.disabled(result.isSaving)
+            }
+            Button("最新の画像をプレビューで編集…") { result.editLatest() }
+                .disabled(result.latestURL == nil)
+            Button("保存フォルダを開く") { result.openFolder() }
             Divider()
             Button { OneClipModeActions.single() } label: {
                 Label("範囲をコピー", systemImage: "viewfinder")
@@ -166,6 +175,12 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
         capture.objectWillChange.sink { [weak collection] _ in
             MainActor.assumeIsolated { collection?.objectWillChange.send() }
         }.store(in: &stateSubscriptions)
+        CaptureResultController.shared.objectWillChange.sink { [weak capture, weak collection] _ in
+            MainActor.assumeIsolated {
+                capture?.objectWillChange.send()
+                collection?.objectWillChange.send()
+            }
+        }.store(in: &stateSubscriptions)
         let keys = ProductHotKeyController.shared
         keys.deliveryAllowed = {
             OneClipModeActions.canStartSingle
@@ -200,6 +215,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !awaitingQuitDecision else { return .terminateLater }
+        guard CaptureResultController.shared.prepareToQuit() else { return .terminateCancel }
         let interface = NativeCaptureInterface.shared
         guard !interface.collectionConfirmationPending, !interface.hasDiscardConfirmation else { return .terminateCancel }
         let capture = SingleCaptureCoordinator.shared
@@ -231,6 +247,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        CaptureResultController.shared.environmentDidChange()
         ProductHotKeyController.shared.stop()
         CaptureSettingsController.shared.hide()
         SingleCaptureCoordinator.shared.stop()
