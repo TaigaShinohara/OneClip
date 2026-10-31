@@ -150,6 +150,11 @@ final class SingleCaptureCoordinator: ObservableObject {
     #endif
 
     var hasRetainedImage: Bool { retainedAsset != nil }
+    /// The collection keeps its sources while a single capture uses the shared worker.
+    /// Its owner releases regenerable output before entry and supplies only image buffers
+    /// outside this coordinator. Failures never discard either mode's source images.
+    var prepareExternalCapture: @MainActor () -> Bool = { true }
+    var externalRetainedBytes: @MainActor () throws -> Int = { 0 }
     var canBegin: Bool {
         !isWorking && !workSlot.isOccupied && phase != .selecting && phase != .permission && phase != .onboarding
             && !isStopping && !interface.captureEntryBlocked
@@ -163,7 +168,8 @@ final class SingleCaptureCoordinator: ObservableObject {
     private let permissionRequest: @MainActor () -> Bool
     private let protectedDataCheck: @MainActor () -> Bool
     private let displayAtPointer: @MainActor () throws -> CaptureDisplaySnapshot
-    private let encode: @Sendable (M0ImageAsset) async throws -> M0CompositionResult
+    private let encode: @Sendable (M0ImageAsset, Int) async throws -> M0CompositionResult
+    private let limits: M0ImageLimits
     private let preferences: CapturePreferences
     private var operationID: UUID?
     private var worker: Task<Void, Never>?
@@ -192,11 +198,8 @@ final class SingleCaptureCoordinator: ObservableObject {
              return try ScreenshotService.snapshot(for: screen)
          },
          preferences: CapturePreferences = .shared,
-         encode: @escaping @Sendable (M0ImageAsset) async throws -> M0CompositionResult = { asset in
-             try await Task.detached(priority: .userInitiated) {
-                 try M0ImageComposer.compose(assets: [asset])
-             }.value
-         }) {
+         limits: M0ImageLimits = .init(),
+         encode: (@Sendable (M0ImageAsset) async throws -> M0CompositionResult)? = nil) {
         self.workSlot = workSlot
         self.capturer = capturer
         self.interface = interface
@@ -206,7 +209,17 @@ final class SingleCaptureCoordinator: ObservableObject {
         self.protectedDataCheck = protectedDataCheck
         self.displayAtPointer = displayAtPointer
         self.preferences = preferences
-        self.encode = encode
+        self.limits = limits
+        if let encode {
+            self.encode = { asset, _ in try await encode(asset) }
+        } else {
+            self.encode = { asset, extraBytes in
+                try await Task.detached(priority: .userInitiated) {
+                    try M0ImageComposer.compose(assets: [asset], limits: limits,
+                                               retainingExtraBytes: extraBytes)
+                }.value
+            }
+        }
     }
 
     func begin() {
@@ -217,6 +230,7 @@ final class SingleCaptureCoordinator: ObservableObject {
         guard canBegin else { return }
         guard validateEnvironment(startIfNeeded: true) else { return }
         guard !hasRetainedImage else { interface.showProblem(activate: true); return }
+        guard prepareExternalCapture() else { return }
         if rememberOrigin { interface.rememberExternalApplication() }
         guard preferences.hasSeenCaptureGuide else {
             let identifier = UUID()
@@ -284,6 +298,14 @@ final class SingleCaptureCoordinator: ObservableObject {
         permissionMessage = observePermission()
             ? "許可を確認できました。範囲を選べます。"
             : "まだ許可を確認できません。システム設定でOneClipをオンにしてください。"
+    }
+
+    /// App activation refreshes the status only; capture and the OS request remain explicit actions.
+    func refreshPermissionStatus() {
+        guard phase == .permission, !isStopping, validateEnvironment() else { return }
+        permissionMessage = observePermission()
+            ? "許可を確認できました。「範囲を選ぶ」で進めます。"
+            : "まだ許可を確認できません。設定後にもう一度確認してください。"
     }
 
     func retryPermission() {
@@ -397,8 +419,21 @@ final class SingleCaptureCoordinator: ObservableObject {
               !interface.captureEntryBlocked,
               selection.display == selectionDisplay else { return }
         guard validateEnvironment(), self.operationID == identifier else { return }
-        do { _ = try RegionGeometry.plan(selection: selection, filterScale: selection.display.scale) }
+        let geometry: RegionCapturePlan
+        do { geometry = try RegionGeometry.plan(selection: selection, filterScale: selection.display.scale) }
         catch { fail("範囲を確認できません。もう一度選んでください。", stage: .selection); return }
+        let budget: CaptureImageBudgetContext
+        do {
+            budget = CaptureImageBudgetContext(retainingExtraBytes: try externalRetainedBytes())
+            let stride = geometry.pixelWidth.multipliedReportingOverflow(by: 4)
+            guard !stride.overflow else { throw M0ImageError.arithmeticOverflow }
+            _ = try budget.validateCandidate(M0ImageMetrics(width: geometry.pixelWidth, height: geometry.pixelHeight,
+                                                            bytesPerRow: stride.partialValue,
+                                                            scale: Double(selection.display.scale)), limits: limits)
+        } catch {
+            fail(budgetFailureMessage(retainingImage: false), stage: .capture)
+            return
+        }
         let settings: SettingsCaptureScope?
         do { settings = try interface.settingsCaptureScope(for: selection) }
         catch {
@@ -410,9 +445,10 @@ final class SingleCaptureCoordinator: ObservableObject {
             return
         }
         #if DEBUG
-        let request = SingleCaptureRequest(selection: selection, operationID: identifier, settings: settings, practice: selectedPractice)
+        let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget,
+                                           settings: settings, practice: selectedPractice)
         #else
-        let request = SingleCaptureRequest(selection: selection, operationID: identifier, settings: settings)
+        let request = SingleCaptureRequest(selection: selection, operationID: identifier, budget: budget, settings: settings)
         #endif
         let expectedCount = clipboard.changeCount
         startWorker(identifier: identifier, expectedCount: expectedCount, existing: nil, request: request)
@@ -447,18 +483,25 @@ final class SingleCaptureCoordinator: ObservableObject {
                     if let settings = request.settings, !settings.validate() { throw ScreenshotError.settingsUnavailable }
                 } else { throw ScreenshotError.invalidSelection }
                 try self.checkCurrent(identifier)
+                // An injected service cannot bypass actual-stride adoption validation. Re-read
+                // collection/UI retention after the await rather than trusting the request snapshot.
+                _ = try CaptureImageBudgetContext(retainingExtraBytes: self.externalRetainedBytes())
+                    .validateCandidate(asset.metrics, limits: self.limits)
                 self.retainedAsset = asset
                 self.phase = .encoding
                 self.statusText = "画像を準備しています…"
                 let data: Data
+                let encodingPlan = try self.singleImagePlan(for: asset)
                 if let cached = self.retainedPNG, existing != nil { data = cached }
                 else {
-                    let result = try await self.encode(asset)
+                    let result = try await self.encode(asset, encodingPlan.retainingExtraBytes)
                     try self.checkCurrent(identifier)
+                    _ = try self.validatePNG(result.pngData, for: asset)
                     self.retainedPNG = result.pngData
                     data = result.pngData
                 }
                 try self.checkCurrent(identifier)
+                _ = try self.validatePNG(data, for: asset)
                 self.phase = .writing
                 // No await between the final operation check and the synchronous pasteboard write.
                 let result = self.clipboard.writePNG(data, expectedChangeCount: expectedCount)
@@ -495,7 +538,9 @@ final class SingleCaptureCoordinator: ObservableObject {
                     return
                 }
                 let message: String
-                if self.hasRetainedImage {
+                if self.isImageBudgetFailure(error) {
+                    message = self.budgetFailureMessage(retainingImage: self.hasRetainedImage)
+                } else if self.hasRetainedImage {
                     message = "画像の準備ができませんでした。取得画像は保持しています。再コピーを試すか、破棄できます。"
                 } else if let failure = error as? ScreenshotError {
                     switch failure {
@@ -516,6 +561,33 @@ final class SingleCaptureCoordinator: ObservableObject {
         guard validateEnvironment(), operationID == identifier else { throw ScreenshotError.invalidated }
         guard protectedDataCheck() else { throw ScreenshotError.protectedDataUnavailable }
         guard observePermission() else { throw ScreenshotError.permissionRequired }
+    }
+
+    private func singleImagePlan(for asset: M0ImageAsset) throws -> M0CompositionPlan {
+        try M0ImageComposer.makePlan(assets: [asset], limits: limits,
+                                     retainingExtraBytes: externalRetainedBytes())
+    }
+
+    private func validatePNG(_ data: Data, for asset: M0ImageAsset) throws -> Int {
+        let plan = try singleImagePlan(for: asset)
+        return try M0ImageComposer.validateEncodedBytes(plan: plan, pngByteCount: data.count,
+                                                       isSingleImage: true, limits: limits)
+    }
+
+    private func budgetFailureMessage(retainingImage: Bool) -> String {
+        retainingImage
+            ? "画像の大きさ、または収集中の素材を含む画像バッファが上限を超えます。取得画像と収集中の素材は保持しています。再コピーを試すか、この画像を破棄して小さい範囲を選んでください。"
+            : "画像の大きさ、または収集中の素材を含む画像バッファが上限を超えます。収集中の素材は保持しています。小さい範囲を選んでください。"
+    }
+
+    private func isImageBudgetFailure(_ error: any Error) -> Bool {
+        if (error as? ScreenshotError) == .imageLimitExceeded { return true }
+        guard let imageError = error as? M0ImageError else { return false }
+        switch imageError {
+        case .invalidMetrics, .countLimit, .dimensionLimit, .sourcePixelLimit,
+             .outputPixelLimit, .memoryLimit, .arithmeticOverflow: return true
+        default: return false
+        }
     }
 
     private func validateEnvironment(startIfNeeded: Bool = false) -> Bool {

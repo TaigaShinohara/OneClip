@@ -2,6 +2,15 @@ import AppKit
 import Carbon
 import SwiftUI
 
+enum CaptureUIOwner: Equatable { case single, collection }
+
+@MainActor
+private final class CaptureReturnOrigin {
+    var application: NSRunningApplication?
+    weak var settingsWindow: NSWindow?
+    var usesSettings = false
+}
+
 @MainActor
 final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDelegate, CollectionCaptureInterface {
     static let shared = NativeCaptureInterface()
@@ -26,26 +35,36 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var collectionPresentationBlocksEntry: Bool { collectionExpanded || collectionConfirmationPending }
     var isOneClipActive: Bool { NSApp.isActive }
     var settingsBlockCapture: (@MainActor () -> Bool)?
-    var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty }
+    var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
+    var collectionCopyBlocked: Bool {
+        settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
+            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
+    }
     var captureEntryBlocked: Bool {
         settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
-            || discardWindow != nil || !discardHandlers.isEmpty
+            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?
+    private var selectionOwner: CaptureUIOwner?
     private var selectionSettingsFrame: CGRect?
     private var selectionSettingsScope: SettingsCaptureScope?
     private var captureGuideWindow: NSWindow?
+    private var captureGuideOwner: CaptureUIOwner?
+    private var captureGuideCancelled: (@MainActor () -> Void)?
+    private var usageGuideWindow: NSWindow?
+    private weak var usageReturnWindow: NSWindow?
     private var expandedSelectionHelp = false
-    private var collectionGuideIsPresented = false
-    private var collectionPermissionIsPresented = false
+    private var permissionOwner: CaptureUIOwner?
     private var permissionWindow: NSWindow?
     private var problemWindow: NSWindow?
     private var discardWindow: NSWindow?
+    private var endAllWindow: NSWindow?
+    private var endAllCompletion: (@MainActor (Bool) -> Void)?
     private var feedbackWindow: NSPanel?
     private var feedbackRevision = 0
     private var lastExternalApplication: NSRunningApplication?
-    private weak var returnSettingsWindow: NSWindow?
-    private var returnToSettings = false
+    private let singleOrigin = CaptureReturnOrigin()
+    private let collectionOrigin = CaptureReturnOrigin()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
     private var sessionMonitor: CaptureSessionMonitor!
     private var consoleUserMonitor: CaptureConsoleUserMonitor!
@@ -108,13 +127,14 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         let activation = workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                object: nil, queue: .main) { [weak self] notification in
             let processID = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self, let processID, processID != ProcessInfo.processInfo.processIdentifier,
                       NSWorkspace.shared.frontmostApplication?.processIdentifier == processID,
                       let application = NSRunningApplication(processIdentifier: processID) else { return }
-                self.lastExternalApplication = application
-                self.returnToSettings = false
-                self.returnSettingsWindow = nil
+                let isPermissionSettingsVisit = self.permissionOwner != nil
+                    && application.bundleIdentifier == "com.apple.systempreferences"
+                if !isPermissionSettingsVisit { self.lastExternalApplication = application }
+                // A permission-settings visit must not replace either operation's return target.
                 if self.coordinator?.phase == .selecting { self.coordinator?.cancel() }
                 if self.collectionCoordinator?.phase == .selecting { self.collectionCoordinator?.cancelOperation() }
             }
@@ -140,7 +160,8 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     func hideCollection() { CollectionPanelController.shared.hide() }
     func showCollectionGuide(started: @escaping @MainActor () -> Void,
                              cancelled: @escaping @MainActor () -> Void) {
-        collectionGuideIsPresented = true
+        captureGuideOwner = .collection
+        captureGuideCancelled = cancelled
         if captureGuideWindow == nil {
             captureGuideWindow = makeWindow(title: "OneClip — 集めてコピー", size: NSSize(width: 480, height: 390))
         }
@@ -153,61 +174,95 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         show(captureGuideWindow)
     }
     func showCollectionPermission() {
-        collectionPermissionIsPresented = true
+        permissionOwner = .collection
         guard let collectionCoordinator else { return }
         if permissionWindow == nil {
             permissionWindow = makeWindow(title: "OneClip — 画面収録の許可", size: NSSize(width: 460, height: 340))
         }
-        permissionWindow?.contentView = NSHostingView(rootView: CollectionPermissionView(coordinator: collectionCoordinator))
+        permissionWindow?.contentView = NSHostingView(rootView: CollectionPermissionView(coordinator: collectionCoordinator,
+            contentSizeChanged: { [weak self] in self?.permissionContentSizeChanged(owner: .collection) }))
         show(permissionWindow)
     }
 
     func rememberExternalApplication() {
+        rememberOrigin(singleOrigin)
+    }
+
+    func rememberCollectionOrigin() {
+        rememberOrigin(collectionOrigin)
+    }
+
+    private func rememberOrigin(_ origin: CaptureReturnOrigin) {
         if let app = NSWorkspace.shared.frontmostApplication,
            app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
             lastExternalApplication = app
-            returnToSettings = false
-            returnSettingsWindow = nil
+            origin.application = app
+            origin.usesSettings = false
+            origin.settingsWindow = nil
         } else if NSApp.isActive, let window = CaptureSettingsController.shared.captureWindow, window.isKeyWindow {
-            rememberSettingsWindow(window)
+            origin.usesSettings = true
+            origin.settingsWindow = window
+        } else {
+            // This method marks a new, explicit operation. A panel button can follow work in a
+            // different external app, so use the latest target rather than an earlier operation's.
+            origin.application = lastExternalApplication
+            origin.usesSettings = false
+            origin.settingsWindow = nil
         }
     }
 
     func rememberSettingsWindow(_ window: NSWindow?) {
         guard NSApp.isActive, let window, window.isVisible, window.isKeyWindow else { return }
-        returnToSettings = true
-        returnSettingsWindow = window
+        singleOrigin.usesSettings = true
+        singleOrigin.settingsWindow = window
     }
 
     func returnToExternalApplication() {
+        returnToOrigin(singleOrigin)
+    }
+
+    func returnToCollectionOrigin() {
+        returnToOrigin(collectionOrigin)
+    }
+
+    private func returnToOrigin(_ origin: CaptureReturnOrigin) {
         guard NSApp.isActive else { return }
-        if returnToSettings {
+        if origin.usesSettings {
             // A closed settings window is never reopened, nor replaced by an old external target.
-            if let window = returnSettingsWindow, CaptureSettingsController.shared.captureWindow === window {
+            if let window = origin.settingsWindow, CaptureSettingsController.shared.captureWindow === window {
                 window.makeKeyAndOrderFront(nil)
             }
             return
         }
-        guard let app = lastExternalApplication, !app.isTerminated else { return }
+        guard let app = origin.application, !app.isTerminated else { return }
         _ = app.activate(options: [])
     }
 
     func prepareForSelection() -> Bool {
+        prepareForSelection(owner: .single)
+    }
+
+    func prepareForCollectionSelection() -> Bool {
+        prepareForSelection(owner: .collection)
+    }
+
+    private func prepareForSelection(owner: CaptureUIOwner) -> Bool {
         guard !captureEntryBlocked else { return false }
         #if DEBUG
         guard !M0LabController.shared.busy else { return false }
         M0LabController.shared.invalidate(hide: true)
         welcomeWindow?.orderOut(nil)
         #endif
-        hidePermission()
-        hideProblem()
+        hidePermission(owner: owner)
+        if owner == .single { hideProblem() }
         feedbackWindow?.orderOut(nil)
         return true
     }
 
     func showCaptureGuide(started: @escaping @MainActor () -> Void,
                           cancelled: @escaping @MainActor () -> Void) {
-        collectionGuideIsPresented = false
+        captureGuideOwner = .single
+        captureGuideCancelled = cancelled
         if captureGuideWindow == nil {
             captureGuideWindow = makeWindow(title: "OneClip — はじめての範囲コピー", size: NSSize(width: 480, height: 390))
         }
@@ -220,12 +275,19 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         show(captureGuideWindow)
     }
 
-    func hideCaptureGuide() { captureGuideWindow?.orderOut(nil) }
+    func hideCaptureGuide() { hideCaptureGuide(owner: .single) }
+    func hideCollectionGuide() { hideCaptureGuide(owner: .collection) }
+    private func hideCaptureGuide(owner: CaptureUIOwner) {
+        guard captureGuideOwner == owner else { return }
+        captureGuideCancelled = nil
+        captureGuideOwner = nil
+        captureGuideWindow?.orderOut(nil)
+    }
 
     func showSelection(on display: CaptureDisplaySnapshot,
                        selected: @escaping @MainActor (CaptureSelection) -> Void,
                        cancelled: @escaping @MainActor () -> Void) {
-        _ = hideSelection()
+        _ = hideSelection(owner: selectionOwner)
         let settings = CaptureSettingsController.shared
         if let window = settings.captureWindow {
             selectionSettingsFrame = window.frame
@@ -247,6 +309,7 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         window.level = .screenSaver
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         let collection = collectionCoordinator?.phase == .selecting
+        selectionOwner = collection ? .collection : .single
         let target = collectionCoordinator?.replacementIndex
         let action = collection ? (target == nil ? "追加" : "取り直し") : "コピー"
         let title = collection ? target.map { "素材\($0 + 1)を取り直す範囲" } ?? "追加する範囲" : "撮影範囲"
@@ -263,13 +326,16 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         window.displayIfNeeded()
     }
 
-    func hideSelection() -> Bool {
+    func hideSelection() -> Bool { hideSelection(owner: .single) }
+    func hideCollectionSelection() -> Bool { hideSelection(owner: .collection) }
+    private func hideSelection(owner: CaptureUIOwner?) -> Bool {
+        guard selectionOwner == owner else { return true }
         selectionSettingsFrame = nil
         selectionSettingsScope = nil
         guard let window = selectionWindow else { return true }
         window.orderOut(nil)
         let hidden = !window.isVisible
-        if hidden { selectionWindow = nil }
+        if hidden { selectionWindow = nil; selectionOwner = nil }
         return hidden
     }
 
@@ -283,31 +349,87 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func showPermission() {
-        collectionPermissionIsPresented = false
+        permissionOwner = .single
         guard let coordinator else { return }
         if permissionWindow == nil {
             permissionWindow = makeWindow(title: "OneClip — 画面収録の許可", size: NSSize(width: 460, height: 340))
         }
         permissionWindow?.contentView = NSHostingView(rootView: CapturePermissionView(coordinator: coordinator,
-            contentSizeChanged: { [weak self] in
-                // Wait for SwiftUI to lay out expanded help before measuring. Never activate over OS settings.
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, !self.collectionPermissionIsPresented,
-                          self.coordinator?.phase == .permission,
-                          let window = self.permissionWindow, window.isVisible else { return }
-                    if let scroll = window.contentView as? NSScrollView, let content = scroll.documentView {
-                        // Re-measure the document after every change, including after a small-screen fallback.
-                        scroll.documentView = nil
-                        window.contentView = content
-                    }
-                    window.contentView?.layoutSubtreeIfNeeded()
-                    self.resizeToFit(window)
-                }
-            }))
+            contentSizeChanged: { [weak self] in self?.permissionContentSizeChanged(owner: .single) }))
         show(permissionWindow)
     }
 
-    func hidePermission() { permissionWindow?.orderOut(nil) }
+    private func permissionContentSizeChanged(owner: CaptureUIOwner) {
+        // Wait for layout, and never activate over System Settings when a status changes.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.permissionOwner == owner,
+                  let window = self.permissionWindow, window.isVisible else { return }
+            if let scroll = window.contentView as? NSScrollView, let content = scroll.documentView {
+                scroll.documentView = nil
+                window.contentView = content
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            self.resizeToFit(window)
+        }
+    }
+
+    func hidePermission() { hidePermission(owner: .single) }
+    func hideCollectionPermission() { hidePermission(owner: .collection) }
+    private func hidePermission(owner: CaptureUIOwner) {
+        guard permissionOwner == owner else { return }
+        permissionOwner = nil
+        permissionWindow?.orderOut(nil)
+    }
+
+    func showWelcomeIfNeeded() {
+        guard !CapturePreferences.shared.hasSeenWelcome else { return }
+        showUsageGuide()
+    }
+
+    /// Reading this guide never starts an operation or changes either retained-image owner.
+    func showUsageGuide() {
+        if usageGuideWindow?.isVisible == true { show(usageGuideWindow); return }
+        guard !captureEntryBlocked, coordinator?.isWorking != true, collectionCoordinator?.isWorking != true,
+              coordinator?.phase != .selecting, coordinator?.phase != .permission,
+              collectionCoordinator?.phase != .selecting, collectionCoordinator?.phase != .permission else { return }
+        usageReturnWindow = NSApp.keyWindow
+        if usageGuideWindow == nil {
+            usageGuideWindow = makeWindow(title: "OneClip — 使い方", size: NSSize(width: 500, height: 560))
+        }
+        usageGuideWindow?.contentView = NSHostingView(rootView: CaptureUsageGuideView(
+            closed: { [weak self] modes in self?.closeUsageGuide(seenModes: modes) },
+            contentSizeChanged: { [weak self] in self?.usageContentSizeChanged() }))
+        show(usageGuideWindow)
+        notifyEntryGateChanged()
+    }
+
+    private func closeUsageGuide(seenModes: Set<Bool> = []) {
+        CapturePreferences.shared.hasSeenWelcome = true
+        if seenModes.contains(false) { CapturePreferences.shared.hasSeenCaptureGuide = true }
+        if seenModes.contains(true) { CapturePreferences.shared.hasSeenCollectionGuide = true }
+        usageGuideWindow?.orderOut(nil)
+        if NSApp.isActive, let window = usageReturnWindow, window.isVisible { window.makeKeyAndOrderFront(nil) }
+        usageReturnWindow = nil
+        notifyEntryGateChanged()
+    }
+
+    private func usageContentSizeChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.usageGuideWindow, window.isVisible else { return }
+            if let scroll = window.contentView as? NSScrollView, let content = scroll.documentView {
+                scroll.documentView = nil
+                window.contentView = content
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            self.resizeToFit(window)
+        }
+    }
+
+    private func notifyEntryGateChanged() {
+        ProductHotKeyController.shared.discardQueuedPresses()
+        coordinator?.objectWillChange.send()
+        collectionCoordinator?.objectWillChange.send()
+    }
 
     func showProblem(activate: Bool) {
         guard let coordinator else { return }
@@ -363,7 +485,6 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func dismissAll() {
-        hideCollection()
         _ = hideSelection()
         hideCaptureGuide()
         if let sheet = discardWindow { problemWindow?.endSheet(sheet, returnCode: .cancel) }
@@ -371,6 +492,13 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         hideProblem()
         feedbackRevision &+= 1
         feedbackWindow?.orderOut(nil)
+    }
+
+    func dismissCollectionUI() {
+        hideCollection()
+        _ = hideCollectionSelection()
+        hideCollectionGuide()
+        hideCollectionPermission()
     }
 
     func closeProblem() {
@@ -414,6 +542,29 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         for handler in handlers { handler(confirmed) }
     }
 
+    func confirmEndAll(singleImage: Bool, collectionCount: Int, hasCandidate: Bool,
+                       completion: @escaping @MainActor (Bool) -> Void) {
+        guard !hasDiscardConfirmation else { completion(false); return }
+        let window = makeWindow(title: "OneClip — 終了の確認", size: NSSize(width: 440, height: 300))
+        endAllWindow = window
+        endAllCompletion = completion
+        window.contentView = NSHostingView(rootView: CaptureEndAllConfirmationView(
+            singleImage: singleImage, collectionCount: collectionCount, hasCandidate: hasCandidate,
+            kept: { [weak self] in self?.answerEndAll(false) },
+            discarded: { [weak self] in self?.answerEndAll(true) }))
+        show(window)
+        notifyEntryGateChanged()
+    }
+
+    private func answerEndAll(_ confirmed: Bool) {
+        let completion = endAllCompletion
+        endAllCompletion = nil
+        endAllWindow?.orderOut(nil)
+        endAllWindow = nil
+        notifyEntryGateChanged()
+        completion?(confirmed)
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === problemWindow, coordinator?.hasRetainedImage == true { closeProblem(); return false }
         return true
@@ -421,11 +572,21 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
 
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window === captureGuideWindow, collectionGuideIsPresented {
-            collectionCoordinator?.discard()
-        } else if window === permissionWindow, collectionPermissionIsPresented {
-            collectionCoordinator?.cancelOperation()
-        } else if window === permissionWindow || window === problemWindow || window === captureGuideWindow {
+        if window === endAllWindow {
+            answerEndAll(false)
+        } else if window === usageGuideWindow {
+            closeUsageGuide()
+        } else if window === captureGuideWindow {
+            let cancelled = captureGuideCancelled
+            captureGuideCancelled = nil
+            captureGuideOwner = nil
+            cancelled?()
+        } else if window === permissionWindow {
+            let owner = permissionOwner
+            permissionOwner = nil
+            if owner == .collection { collectionCoordinator?.cancelOperation() }
+            else if owner == .single { coordinator?.cancel() }
+        } else if window === problemWindow {
             coordinator?.cancel()
         }
         #if DEBUG
@@ -570,7 +731,7 @@ private final class RegionSelectionView: NSView {
         self.expandedHelp = expandedHelp
         self.actionLabel = actionLabel
         self.selectionTitle = selectionTitle
-        hint = "ドラッグを離すと\(actionLabel)・Escで取消・1つの画面内"
+        hint = "ドラッグを離すと\(actionLabel)・矢印でも選択・Escで取消・1つの画面内"
         super.init(frame: NSRect(origin: .zero, size: display.frame.size))
         setAccessibilityLabel("\(selectionTitle)の選択。確定すると\(actionLabel)します。ドラッグ、または矢印で開始。Shiftと矢印で大きさを変更、Returnで確定、Escapeで取消。")
     }
@@ -711,56 +872,37 @@ private final class RegionSelectionView: NSView {
     }
 }
 
-/// Presentation-only content shared by the single and collection introductions.
-struct CaptureGuideView: View {
+/// The same instructions appear at first use and in the permanent usage guide.
+private struct CaptureGuideInstructions: View {
     let collection: Bool
-    let started: () -> Void
-    let cancelled: () -> Void
     @Environment(\.colorScheme) private var colorScheme
-
     private var tone: OneClipTone { collection ? .collection : .single }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            OneClipHeading(title: collection ? "必要なところを集めて、ひと貼り" : "必要なところを選んで、コピー",
-                           systemName: collection ? "square.stack" : "viewfinder", tone: tone)
-            VStack(alignment: .leading, spacing: 18) {
-                guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
-                          message: collection
-                            ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
-                            : "1つの画面内でドラッグし、離すとコピーします。確認画面や保存先の選択はありません。")
-                Divider()
-                guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "順序と完成画像を確認してコピー" : "キーボードでも選べます",
-                          message: collection
-                            ? "収集中はクリップボードを変更しません。最後に「コピー」を押してください。"
-                            : "矢印で範囲を作成・移動し、Shift + 矢印で大きさを変えます。Enterで確定、Escapeで取り消せます。")
-            }
-            .oneClipCard()
-            if collection {
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("追加や取り直しのEscは旧素材を残します。パネルを閉じる時は全体破棄を確認します。", systemImage: "arrow.uturn.backward")
-                        .foregroundStyle(.secondary)
-                    Label("スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。", systemImage: "exclamationmark.circle")
-                }
-                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-            } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("確定すると、今のクリップボードを置き換えます。", systemImage: "doc.on.clipboard")
-                    Text("撮影に必要な場合だけ画面収録の許可を案内します。")
-                        .foregroundStyle(.secondary)
-                }
-                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Button("取消", action: cancelled).keyboardShortcut(.cancelAction)
-                Spacer()
-                Button(collection ? "最初の範囲を選ぶ" : "範囲選択を始める", action: started)
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
-            }
-            .buttonBorderShape(.capsule).controlSize(.large).tint(tone.color(for: colorScheme))
+        VStack(alignment: .leading, spacing: 18) {
+            guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
+                      message: collection
+                        ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
+                        : "1つの画面内でドラッグし、離すとコピーします。確認画面や保存先の選択はありません。")
+            Divider()
+            guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "完成画像を確認してコピー" : "矢印でも選べます",
+                      message: collection
+                        ? "収集中はクリップボードを変更しません。撮影順に並ぶ完成画像を確認し、最後に「コピー」を押してください。"
+                        : "矢印で範囲を作成・移動し、Shift + 矢印で大きさを変えます。Enterで確定、Escapeで取り消せます。")
         }
-        .oneClipWindow().frame(width: 500, alignment: .leading)
-        .fixedSize(horizontal: false, vertical: true)
+        .oneClipCard()
+        VStack(alignment: .leading, spacing: 8) {
+            if collection {
+                Label("取り直しは、新しい範囲を確認してから差し替えます。途中で取り消すと旧素材を残します。", systemImage: "arrow.uturn.backward")
+                Text("収集パネルを閉じても素材は残ります。未コピーの素材・変更の破棄や、未コピー画像を残して終了する時は確認します。スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。")
+                    .foregroundStyle(.secondary)
+            } else {
+                Label("確定すると、今のクリップボードを置き換えます。", systemImage: "doc.on.clipboard")
+                Text("撮影に必要な場合だけ画面収録の許可を案内します。")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
     }
 
     private func guideStep(symbol: String, title: String, message: String) -> some View {
@@ -773,6 +915,76 @@ struct CaptureGuideView: View {
                 Text(message).font(.callout).foregroundStyle(.secondary)
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+struct CaptureGuideView: View {
+    let collection: Bool
+    let started: () -> Void
+    let cancelled: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+    private var tone: OneClipTone { collection ? .collection : .single }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            OneClipHeading(title: collection ? "必要なところを集めて、ひと貼り" : "必要なところを選んで、コピー",
+                           systemName: collection ? "square.stack" : "viewfinder", tone: tone)
+            CaptureGuideInstructions(collection: collection)
+            HStack {
+                Button("取消", action: cancelled).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button(collection ? "最初の範囲を選ぶ" : "範囲選択を始める", action: started)
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .buttonBorderShape(.capsule).controlSize(.large).tint(tone.color(for: colorScheme))
+        }
+        .oneClipWindow().frame(width: 500, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct CaptureUsageGuideView: View {
+    let closed: (Set<Bool>) -> Void
+    let contentSizeChanged: () -> Void
+    @State private var collection: Bool
+    @State private var viewedModes: Set<Bool>
+
+    init(collection: Bool = false, closed: @escaping (Set<Bool>) -> Void,
+         contentSizeChanged: @escaping () -> Void = {}) {
+        self.closed = closed
+        self.contentSizeChanged = contentSizeChanged
+        _collection = State(initialValue: collection)
+        _viewedModes = State(initialValue: [collection])
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            OneClipHeading(title: "OneClipの使い方", subtitle: "必要なところを集めて、ひと貼り",
+                           systemName: "viewfinder", tone: .neutral)
+            Text("画面上端のOneClipメニューから、二つの撮影を使えます。キーは「設定…」で任意に設定できます。")
+                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            Picker("撮影の使い方", selection: $collection) {
+                Text("範囲をコピー").tag(false)
+                Text("集めてコピー").tag(true)
+            }
+            .pickerStyle(.segmented)
+            CaptureGuideInstructions(collection: collection)
+            Text("この案内は、メニューや設定の「使い方…」からいつでも見返せます。")
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("使い方を確認しました") { closed(viewedModes.union([collection])) }
+                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+            }
+            .buttonBorderShape(.capsule).controlSize(.large)
+        }
+        .oneClipWindow().frame(width: 500, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .onChange(of: collection) { _, value in
+            viewedModes.insert(value)
+            contentSizeChanged()
         }
     }
 }
@@ -821,77 +1033,168 @@ struct CaptureDiscardConfirmationView: View {
     }
 }
 
+private struct CaptureEndAllConfirmationView: View {
+    let singleImage: Bool
+    let collectionCount: Int
+    let hasCandidate: Bool
+    let kept: () -> Void
+    let discarded: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            OneClipHeading(title: "保持している画像と素材を破棄して終了しますか？",
+                           systemName: "exclamationmark", tone: .warning)
+            VStack(alignment: .leading, spacing: 8) {
+                if singleImage { Text("範囲をコピー：未コピーの画像 1枚") }
+                if collectionCount > 0 { Text("集めてコピー：収集中の素材 \(collectionCount)枚") }
+                if hasCandidate { Text("取り直し：確認中の候補 1枚") }
+                Text("終了後はこれらの画像を復元できません。クリップボードは変更しません。")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("戻る", action: kept).keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("すべて破棄して終了", role: .destructive, action: discarded)
+            }
+            .buttonStyle(.bordered).buttonBorderShape(.capsule).controlSize(.large)
+        }
+        .oneClipWindow().frame(width: 440, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
 struct CapturePermissionView: View {
     @ObservedObject var coordinator: SingleCaptureCoordinator
     let contentSizeChanged: () -> Void
-    @State private var showsHelp: Bool
+    var body: some View {
+        CapturePermissionContent(status: coordinator.permissionStatus, message: coordinator.permissionMessage,
+                                 tone: .single, simulated: simulated,
+                                 requested: { coordinator.requestPermission() },
+                                 selected: { coordinator.retryPermission() },
+                                 cancelled: { coordinator.cancel() }, contentSizeChanged: contentSizeChanged,
+                                 checked: { coordinator.refreshPermissionStatus() })
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                coordinator.refreshPermissionStatus()
+            }
+    }
+    private var simulated: Bool {
+        #if DEBUG
+        M2FailureLab.isEnabled || M3FailureLab.isEnabled
+        #else
+        false
+        #endif
+    }
+}
 
-    init(coordinator: SingleCaptureCoordinator, contentSizeChanged: @escaping () -> Void) {
-        self.coordinator = coordinator
-        self.contentSizeChanged = contentSizeChanged
-        _showsHelp = State(initialValue: coordinator.permissionStatus == .requestUnconfirmed
-                           || coordinator.permissionStatus == .noLongerAvailable)
+struct CollectionPermissionView: View {
+    @ObservedObject var coordinator: CollectionCaptureCoordinator
+    let contentSizeChanged: () -> Void
+    var body: some View {
+        CapturePermissionContent(status: coordinator.permissionStatus, message: coordinator.permissionMessage,
+                                 tone: .collection, simulated: simulated,
+                                 requested: { coordinator.requestPermission() },
+                                 selected: { coordinator.retryPermission() },
+                                 cancelled: { coordinator.cancelOperation() }, contentSizeChanged: contentSizeChanged,
+                                 checked: { coordinator.refreshPermissionStatus() })
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                coordinator.refreshPermissionStatus()
+            }
+    }
+    private var simulated: Bool {
+        #if DEBUG
+        M3FailureLab.isEnabled
+        #else
+        false
+        #endif
+    }
+}
+
+/// Shared presentation never interprets an unconfirmed preflight as a denied request.
+private struct CapturePermissionContent: View {
+    let status: CapturePermissionStatus
+    let message: String
+    let tone: OneClipTone
+    let simulated: Bool
+    let requested: () -> Void
+    let selected: () -> Void
+    let cancelled: () -> Void
+    let contentSizeChanged: () -> Void
+    let checked: () -> Void
+    @State private var showsHelp = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(status: CapturePermissionStatus, message: String, tone: OneClipTone, simulated: Bool,
+         requested: @escaping () -> Void, selected: @escaping () -> Void, cancelled: @escaping () -> Void,
+         contentSizeChanged: @escaping () -> Void, checked: @escaping () -> Void = {}) {
+        self.status = status; self.message = message; self.tone = tone; self.simulated = simulated
+        self.requested = requested; self.selected = selected; self.cancelled = cancelled
+        self.contentSizeChanged = contentSizeChanged; self.checked = checked
     }
 
-    private var needsSettings: Bool {
-        coordinator.permissionStatus == .requestUnconfirmed || coordinator.permissionStatus == .noLongerAvailable
-    }
+    private var needsSettings: Bool { status == .requestUnconfirmed || status == .noLongerAvailable }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            OneClipHeading(title: "画面収録の許可", systemName: "rectangle.on.rectangle", tone: .single)
+            OneClipHeading(title: "画面収録の許可", subtitle: tone == .collection ? "集めてコピー" : "範囲をコピー",
+                           systemName: "rectangle.on.rectangle", tone: tone)
             VStack(alignment: .leading, spacing: 12) {
-                Text(coordinator.permissionMessage)
-                    .lineSpacing(4).fixedSize(horizontal: false, vertical: true)
+                Text(message).lineSpacing(4).fixedSize(horizontal: false, vertical: true)
                 Label("画像の保存・送信は行いません。", systemImage: "lock")
                     .font(.callout).foregroundStyle(.secondary)
             }
             .oneClipCard()
-            DisclosureGroup("許可済み・許可できない場合", isExpanded: $showsHelp) {
+            if simulated {
+                Text("安全な試験：許可要求と確認は模擬です。macOSの設定は変更しません。")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            DisclosureGroup("許可済み・許可を確認できない場合", isExpanded: $showsHelp) {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("システム設定 → プライバシーとセキュリティ → 画面収録で、OneClipをオンにします。")
+                    Text("システム設定 → プライバシーとセキュリティ → 画面収録（画面とシステムオーディオの収録）で、OneClipを確認します。")
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("OSが再起動を求めた場合は、その案内に従ってください。")
+                    Text("目的の画面が開かなければ、上の順に開いてください。OSがアプリの終了や再起動を求めた時だけ、その案内に従ってください。")
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    if needsSettings {
-                        Button("もう一度許可を求める") { coordinator.requestPermission() }
-                    } else {
-                        Button("システム設定を開く", action: openSettings)
+                    if !simulated && !needsSettings {
+                        Button("画面収録の設定を開く", action: openSettings)
                     }
-                    if coordinator.permissionStatus != .granted {
-                        Text("設定後、この画面から範囲選択へ進めます。")
-                            .foregroundStyle(.secondary)
-                        Button("許可を確認して続ける") { coordinator.retryPermission() }
-                    }
+                    if needsSettings { Button("もう一度許可を求める", action: requested) }
+                    Button("許可を確認", action: checked)
+                    Text("設定から戻っても撮影は始まりません。「許可を確認」で状態を確かめ、許可を確認できたら「範囲を選ぶ」で進みます。")
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.callout).lineSpacing(3).padding(.top, 10)
             }
             .font(.callout)
             HStack {
-                Button("キャンセル") { coordinator.cancel() }.keyboardShortcut(.cancelAction)
+                Button("キャンセル", action: cancelled).keyboardShortcut(.cancelAction)
                 Spacer()
-                if coordinator.permissionStatus == .granted {
-                    Button("範囲を選ぶ") { coordinator.retryPermission() }.buttonStyle(.borderedProminent)
+                if status == .granted {
+                    Button("範囲を選ぶ", action: selected).buttonStyle(.borderedProminent)
                 } else if needsSettings {
-                    Button("システム設定を開く", action: openSettings).buttonStyle(.borderedProminent)
+                    Button("画面収録の設定を開く", action: openSettings).buttonStyle(.borderedProminent)
+                        .disabled(simulated)
                 } else {
-                    Button("許可を求める") { coordinator.requestPermission() }.buttonStyle(.borderedProminent)
+                    Button("許可を求める", action: requested).buttonStyle(.borderedProminent)
                 }
             }
-            .controlSize(.large).buttonBorderShape(.capsule)
+            .controlSize(.large).buttonBorderShape(.capsule).tint(tone.color(for: colorScheme))
         }
         .oneClipWindow().frame(width: 460, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
+        .onAppear { showsHelp = needsSettings }
         .onChange(of: showsHelp) { _, _ in contentSizeChanged() }
-        .onChange(of: coordinator.permissionMessage) { _, _ in contentSizeChanged() }
-        .onChange(of: coordinator.permissionStatus) { _, status in
-            if status == .requestUnconfirmed || status == .noLongerAvailable { showsHelp = true }
-            if status == .granted { showsHelp = false }
+        .onChange(of: message) { _, _ in contentSizeChanged() }
+        .onChange(of: status) { _, newStatus in
+            showsHelp = newStatus == .requestUnconfirmed || newStatus == .noLongerAvailable
             contentSizeChanged()
         }
     }
 
     private func openSettings() {
+        guard !simulated else { return }
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"),
+           NSWorkspace.shared.open(url) { return }
+        // If this OS does not accept the destination URL, keep the written route available.
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 }
