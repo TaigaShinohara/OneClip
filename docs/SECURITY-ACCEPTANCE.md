@@ -55,6 +55,8 @@ python3 -B -m unittest discover -s Tests -p '*Tests.py' -v
 `--sampling-oracle`はraw alpha判定14対照とflat color resampling 4条件の画面外検証です。
 `--capture-sampling`は取得サイズとalphaの原因調査用で最大5取得、明示指定するorigin追加系列のみ最大8取得です。
 これらの成功も、実SCKの1px境界の正しさを代替しません。
+fixture比較はRGB許容差とalpha255の厳密条件を分け、読取り不成立を透明・palette一致へ変換しません。
+各取得前後・current確認・画素観測後の成立条件を検査し、一度失敗した同じ試行は再開しません。
 
 ## 有限資源判定
 
@@ -77,6 +79,7 @@ python3 -B -m unittest discover -s Tests -p '*Tests.py' -v
 局所修正後の`rebind`は元の閾値を保持し、再校正で上限を緩めません。
 画面外の実View生成・所有を、実際のdraw・窓表示・VoiceOverの証拠にしません。
 warmup/measured別のheartbeatは切分け用です。cold warmupを含むaggregateの不合格を除外しません。
+初回期限はstartから50msに固定し、Task entryの遅れへさらに50msを加えません。未callbackの終了tailも計上します。
 子processのtimeout・中断・wait失敗では、自分が起動したhandleだけを有限時間で終了・回収しようとします。
 handle未取得や回収確認不能は成功にせず、以後の試行を止めます。
 
@@ -134,8 +137,9 @@ Nativeの18結合ケースは実FD load／実render後にgateを置く混合試�
 source/built inputs→署名app manifest→提出ZIP/公証log→staple後app→最終ZIP/再展開manifestの対応を保持します。
 製品コード・署名対象・ID・権限が変われば該当する証拠を取り直し、旧候補の成功を新候補へ移しません。
 Releaseでは署名前にdebugging symbolを除去し、実binary/ZIPの内部パス等も値を出さず点検します。
-現在の統合候補はDebug/署名済みuniversal Release・再展開後の署名preflightまで成功しています。
-最低OS設定と両architectureの存在は、macOS14やIntel実機での実行成功ではありません。新候補の公証は未実施で、旧候補のAcceptedを継承しません。
+製品入力`a4ac966f…d17bd08`に対応する統合候補はApple Accepted・指摘0件、stapleとGatekeeperのpreflight、最終ZIP再展開後の同一性検証まで成功しています。
+[固定候補の公証結果](M4-VERIFICATION.md#security-integrated-notarization-20261031)を参照してください。旧候補の成功を流用していません。
+最低OS設定と両architectureの存在は、macOS14やIntel実機での実行成功ではありません。製品入力が変われば、この公証結果を新しい版へ継承しません。
 
 各必須項目は`PASS`/`FAIL`/`NOT_ESTABLISHED`/`BLOCKED`/根拠付き対象外に分類し、別担当が同じ版と証拠を照合します。
 未実証・未解決の必須項目が残れば、対応する受入は未完了です。
