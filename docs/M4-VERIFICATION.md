@@ -392,3 +392,104 @@ ImageIO内部やOS allocatorのどれが原因かを確定せず、元の約69MB
 
 試験コード・一時対照の成功を、製品の資源受入や実SCK／GUI／OS遷移・最低OS／Intelの合格へ移しません。
 全体受入は未完了のままです。
+
+<a id="security-allocator-observation-20261101"></a>
+## 資源増加の時点別再集計と観測器の成立確認（2026-11-01）
+
+対象はR09／T05・T09／D05・D16の資源確認です。製品入力と公証済み候補は変更していません。
+アプリの所有参照、malloc統計、RSS、footprint、VM領域metadataを別の観測値として扱います。
+
+### 既存のcount-only実行を再集計
+
+前節と同じ実行の全sampleとsummaryを照合しました。新しい画像処理は実行していません。
+末尾5点中央値からwarmup後を引いた増分はRSS209,420,288 bytes、footprint217,202,856 bytesで一致しました。
+同じ比較でmalloc使用量は23,600 bytes、malloc確保量は4,194,304 bytes増えています。
+各統計は意味が異なり、mallocの小さい増分をプロセス全体の解放成功へ読み替えません。
+
+| 観測点 | RSS（bytes） | footprint（bytes） | malloc使用量（bytes） | malloc確保量（bytes） |
+| --- | ---: | ---: | ---: | ---: |
+| warmup 2・scope解放後 | 41,353,216 | 31,490,696 | 506,080 | 37,748,736 |
+| idle 0 | 204,554,240 | 264,028,976 | 499,168 | 41,943,040 |
+| idle 5 | 26,329,088 | 97,731,280 | 484,560 | 41,943,040 |
+| idle 15 | 17,399,808 | 4,784,776 | 456,864 | 41,943,040 |
+| idle 30 | 17,399,808 | 4,784,776 | 456,864 | 41,943,040 |
+
+idleの5／15／30は目標秒数で、実報告はidle開始から5.193931250／15.540638042／30.943805042秒です。
+idle 0は固定ラベルであり、測定遅延ゼロの証拠ではありません。同じ行の各APIも順次呼出しで、原子的な同時snapshotではありません。
+この実行ではidle中の低下を観測しましたが、保持元・cache・恒久的leakの有無・物理消去は特定できません。
+凍結した末尾5点の基準E=8MiBを超える未説明の増加は未合格のままです。idle値でその判定を置き換えません。
+
+### 整形出力を使うallocator観測の終了
+
+公開の`malloc_introspection_t.print_task`を自己processだけで利用する一時的な観測器を作成しました。
+無画像の通常版とASAN／UBSan版で各12自己試験が成功しました。
+実APIの試行は1 fresh process・最初のsnapshotで固定の整形規則に一致せず、`NOT_ESTABLISHED`で停止しました。
+version16、callback45回、reader6回を観測し、exit2・stderr0・子process回収を確認しました。
+16MiBの対照割当より前で停止したため、live／解放後の成立は未確認です。
+rawの整形文字列・アドレス・領域内容は保存していません。
+この経路の解析規則は拡張せず、再試行・PNG処理への組込みは行いません。
+
+製品コードの変更・資源合格・元の約69MB増加の解消を示す結果ではありません。
+
+### 数値VM metadataの無画像pilot
+
+別の一時観測器では、公開の[`mach_vm_region_recurse`](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/mach/mach_vm.defs)と
+[`vm_region_submap_info_64`](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/mach/vm_region.h)のV2を明示要求しました。
+自己processだけを最大65,536領域・depth16・1snapshot500ms・親10秒で走査し、固定5分類の数値だけを返します。
+返却count不一致、submap残存、未知の終了値、進行不成立、overflow、時間超過は未成立にします。
+領域アドレス・内容・object ID・raw OS errorは出力しません。
+
+通常版とASAN／UBSan版で各13の純粋なmetadata自己試験が成功し、親parserは正常1条件・拒否10条件が成功しました。
+その後の無画像1 fresh processで、baseline→16MiBの架空バッファ保持→free後の3snapshotが成立しました。
+ページ単位は16,384 bytes、領域数は189／190／190、API呼出しは190／191／191、走査時間は29.865／24.732／25.498msでした。
+liveの16,777,216 bytes全域がmalloc系tagで覆われ、free後は旧pointer／rangeを渡さずに走査しました。
+exit0・stderr0・子process回収を確認しています。
+
+観測器のC source SHA-256は`b515cdcea51d4f447118b09150887866c352a66fa6146eaa4e5de6c88ab165e9`、
+通常実行物は`09f10a428e841fd0191ae776184fd14e6ebac17fdabc6c21cda960cdfe021e9a`です。
+これは当該processで数値観測器が成立した結果で、別OS／CPU・製品経路の合格ではありません。
+regionのresident／reusable／dirtied／swappedはraw page数と換算値を併記し、RSS／footprintへ足しません。
+共有・aliasによる重複、逐次走査中の変化、観測の影響があり、swapped換算値を圧縮後の物理bytesとも同一視しません。
+
+### 同じPNG count処理への3時点観測
+
+pilot成立後、前節のcount-only処理と同じCore／Traceに一時観測器をlinkし、Probeには3回の呼出しだけを加えました。
+正規のC headerをSwiftへimportし、warmup2後・測定30回後・idle30後の元scalar採取と実worker返却の後に走査します。
+元のサンプルを観測器の後へ移動せず、観測時間もheartbeatから除外しません。
+固定のcount 1 fresh processだけを実行し、Data arm・延長・再試行は行っていません。
+
+入力IDは`2a113f5ff80dab943a59a888d0b0282ef8ae8ebb`、
+実行物SHA-256は`b53d08a325ef709c32c4ddd6ff60818a349c290647520d903f9f74c31da15fad`です。
+Swift 6 strict concurrency／最適化のコンパイルが成功し、3snapshotとも完全走査・reason=0・上限内で成立しました。
+走査時間は28.285／25.795／42.579ms、page sizeは16,384 bytesです。
+親は許可していないキーや文字列を保存前に拒否し、検証済みfieldからscalar行を再構成します。
+その正常428行と拒否6条件の自己試験も成功しています。
+
+| VM観測時点 | malloc系領域数 | 仮想bytes | 報告resident換算bytes | 報告swapped換算bytes |
+| --- | ---: | ---: | ---: | ---: |
+| warmup2後 | 24 | 55,902,208 | 29,835,264 | 0 |
+| 測定30回後 | 67 | 232,587,264 | 191,283,200 | 0 |
+| idle30後 | 21 | 39,649,280 | 1,212,416 | 10,682,368 |
+
+最初の2時点のmalloc系resident換算増分は161,447,936 bytesです。
+同時点間でother分類の仮想サイズ・領域数は同じで、報告residentは1,654,784 bytes減少しました。
+ImageIO／CG専用tagは3時点とも0領域ですが、そのframeworkがmalloc系tagを利用する可能性は排除できず、呼出元の特定にはなりません。
+deferred分類は3時点とも仮想67,125,248 bytes・報告resident16,384 bytesで、PNG backlog量を示しません。
+
+| 元の資源観測・成立項目 | 結果 |
+| --- | --- |
+| Finalize成功／consumer生成・解放／実worker返却 | 各32回、失敗0件 |
+| 1回のPNG出力／32回累積 | 7,639,055／244,449,760 bytes |
+| client PNG Data累積・最大／takeData | すべて0 |
+| 末尾5点中央値のRSS／footprint増分 | 146,210,816／144,195,704 bytes |
+| sampled peakのRSS／footprint | 212,484,096／200,622,896 bytes |
+| process high-water | 220,020,736 bytes |
+| idle30直前scalarのRSS／footprint | 12,091,392／13,402,736 bytes |
+
+子processは約37.018秒でexit0・stderr0・回収済みです。
+診断の成立とE=8MiB超過を分け、親の判定は`ESTABLISHED_DIAGNOSTIC_RESOURCE_UNQUALIFIED`、exit2です。
+malloc使用量の末尾5点中央値は546,800 bytes、malloc確保量は25,165,824 bytesで、この大きなVM増加とは別の値です。
+増加の分類を絞った結果であり、特定のallocator実装・cache・ImageIO内部・保持元の確定や、旧約69MB増加の解消ではありません。
+待機後の低下、今回の小さいheartbeat値、以前より小さい増分を、資源合格やcold UI問題の解消へ転用しません。
+元のE／peak／取消期限・画像予算は変更せず、この有限系列を終了しました。
+通常アプリ、実SCK・表示・一般クリップボード・OS遷移は未実施で、対応宣言全体の受入も未完了です。
