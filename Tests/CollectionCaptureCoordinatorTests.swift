@@ -48,7 +48,9 @@ struct CollectionCaptureCoordinatorTests {
             ("UX-COLLECTION-05 new-session admission preserves a rejected copied draft", testNewSessionAdmission),
             ("UX-COLLECTION-06 retained collection permits an independent single capture", testSingleWithRetainedCollection),
             ("UX-COLLECTION-07 replacement decisions recheck unavailable data", testReplacementDecisionFences),
-            ("UX-COLLECTION-08 single entry fences retained collection without blocking first permission guidance", testSingleEntryRetainedFence)
+            ("UX-COLLECTION-08 single entry fences retained collection without blocking first permission guidance", testSingleEntryRetainedFence),
+            ("SECURITY-COLLECTION-01 every environment event clears copied and candidate owners", testEnvironmentRetainedMatrix),
+            ("SECURITY-COLLECTION-02 every event rejects late success and failure at worker boundaries", testEnvironmentLateMatrix)
         ]
         for (name, body) in groups {
             try await body()
@@ -223,7 +225,10 @@ struct CollectionCaptureCoordinatorTests {
                 await withCheckedContinuation { pending = $0 }
             }
             if failNext { failNext = false; throw M0ImageError.encodingFailed }
-            return try M0ImageComposer.compose(assets: assets, limits: limits)
+            // A late framework result remains possible even after cancellation. Do not
+            // let the production composer's cancellation mask that adoption-fence test.
+            return try M0ImageComposer.compose(assets: assets, limits: limits,
+                                               checkCancellation: { _ in })
         }
         func release() throws {
             guard let pending else { throw Failure(description: "No pending fabricated composition") }
@@ -1244,6 +1249,109 @@ struct CollectionCaptureCoordinatorTests {
                            "A replacement decision retained unavailable original/candidate data or copied it")
             }
         }
+    }
+
+    /// All environment signals share the same security invariant even when the draft was
+    /// copied, edited afterwards, or owns a replacement candidate. No OS event is emitted.
+    @MainActor
+    static func testEnvironmentRetainedMatrix() async throws {
+        var cases = 0
+        for event in CaptureEnvironmentEvent.allCases {
+            for copyState in 0..<3 {
+                for withCandidate in [false, true] {
+                    let h = try Harness(); defer { h.cleanUp() }
+                    try await h.add(); try await h.add(index: 2, width: 20)
+                    if copyState > 0 { h.coordinator.copy(); await h.coordinator.waitForWorker() }
+                    if copyState == 2 { try await h.add(index: 3, width: 24) }
+                    if withCandidate {
+                        h.capturer.nextAsset = try M0ImageFixture.make(index: 4, width: 28, height: 16)
+                        h.coordinator.replace(at: 0); try h.select(width: 28)
+                        await h.coordinator.waitForWorker()
+                        try expect(h.coordinator.pendingReplacement != nil, "Candidate precondition missing")
+                    } else {
+                        h.coordinator.preparePreview(); await h.coordinator.waitForWorker()
+                        try expect(h.coordinator.completed != nil, "Cached output precondition missing")
+                    }
+                    let candidateID = h.coordinator.pendingReplacement?.id
+                    let staleSelection = h.interface.selected
+                    let calls = h.capturer.calls, writes = h.clipboard.calls
+                    let feedback = h.interface.feedback.count
+                    h.coordinator.environmentDidChange(event)
+                    try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty
+                               && h.coordinator.completed == nil && h.coordinator.pendingReplacement == nil
+                               && h.coordinator.copiedContentRevision == nil && !h.slot.isOccupied,
+                               "Environment event retained a copied draft, candidate, cache or session")
+                    staleSelection?(try h.selection())
+                    if let candidateID { h.coordinator.acceptReplacement(id: candidateID) }
+                    h.coordinator.showPanel(); h.coordinator.copy(); h.coordinator.beginFromShortcut()
+                    try expect(h.capturer.calls == calls && h.clipboard.calls == writes
+                               && h.interface.feedback.count == feedback && !h.coordinator.isActive,
+                               "An obsolete callback, copy or shortcut revived invalidated content")
+                    h.coordinator.beginNewSession()
+                    try expect(h.coordinator.phase == .selecting && h.coordinator.assets.isEmpty,
+                               "A new explicit session could not recover after invalidation")
+                    h.coordinator.cancelOperation()
+                    cases += 1
+                }
+            }
+        }
+        try expect(cases == CaptureEnvironmentEvent.allCases.count * 6,
+                   "The retained-state matrix did not cover every event and state")
+        print("PASS SECURITY retained-state matrix cases=\(cases) injectedEvents=1")
+    }
+
+    /// The injected services deliberately return after cancellation. Each event is tested
+    /// with both a late success and an exception at capture and composition boundaries.
+    @MainActor
+    static func testEnvironmentLateMatrix() async throws {
+        var cases = 0
+        for event in CaptureEnvironmentEvent.allCases {
+            for duringEncoding in [false, true] {
+                for lateFailure in [false, true] {
+                    let h = try Harness(); defer { h.cleanUp() }
+                    try await h.add()
+                    h.coordinator.copy(); await h.coordinator.waitForWorker()
+                    let writes = h.clipboard.calls, feedback = h.interface.feedback.count
+                    if duringEncoding {
+                        h.composer.pauseNext = true; h.coordinator.copy()
+                        try await waitUntil { h.composer.isWaiting }
+                    } else {
+                        h.capturer.pauseNext = true; h.coordinator.beginOrAdd(); try h.select()
+                        try await waitUntil { h.capturer.isWaiting }
+                    }
+                    h.coordinator.environmentDidChange(event)
+                    try expect(!h.coordinator.isActive && h.coordinator.assets.isEmpty
+                               && h.coordinator.pendingReplacement == nil && h.coordinator.completed == nil
+                               && h.coordinator.isWorking && h.slot.isOccupied,
+                               "Invalidation released the live worker permit or retained source state")
+                    let selections = h.interface.selectionCalls
+                    let shown = h.interface.collectionActivations.count
+                    h.coordinator.beginNewSession(); h.coordinator.copy()
+                    try expect(h.interface.selectionCalls == selections && h.clipboard.calls == writes,
+                               "New work overlapped an invalidated but unfinished worker")
+                    if duringEncoding {
+                        h.composer.failNext = lateFailure
+                        try h.composer.release()
+                    } else {
+                        try h.capturer.release(error: lateFailure ? .captureFailed : nil)
+                    }
+                    await h.coordinator.waitForWorker()
+                    try expect(!h.slot.isOccupied && !h.coordinator.isWorking && !h.coordinator.isActive
+                               && h.coordinator.assets.isEmpty && h.coordinator.completed == nil
+                               && h.coordinator.pendingReplacement == nil && h.clipboard.calls == writes
+                               && h.interface.feedback.count == feedback
+                               && h.interface.collectionActivations.count == shown,
+                               "A late success or failure revived invalidated pixels, UI or clipboard output")
+                    try await h.add(index: 2)
+                    try expect(h.coordinator.assets.count == 1,
+                               "Fresh explicit capture failed after the old worker actually returned")
+                    cases += 1
+                }
+            }
+        }
+        try expect(cases == CaptureEnvironmentEvent.allCases.count * 4,
+                   "The late-result matrix did not cover every event and outcome")
+        print("PASS SECURITY late-result matrix cases=\(cases) injectedEvents=1")
     }
 
     @MainActor

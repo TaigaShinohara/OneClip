@@ -235,7 +235,9 @@ struct SingleCaptureCoordinatorTests {
                 failuresRemaining -= 1
                 throw EncodeFailure.injected
             }
-            let result = try M0ImageComposer.compose(assets: [asset])
+            // Keep this fake deliberately uncooperative so the adoption fence is tested
+            // independently from production's cooperative ImageIO cancellation.
+            let result = try M0ImageComposer.compose(assets: [asset], checkCancellation: { _ in })
             guard let pngByteCount else { return result }
             // Fabricated bytes test actual encoded-size admission without allocating large images.
             return M0CompositionResult(image: result.image, pngData: Data(repeating: 0, count: pngByteCount),

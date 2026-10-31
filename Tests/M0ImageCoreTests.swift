@@ -1,4 +1,5 @@
 import CoreGraphics
+import Dispatch
 import Foundation
 import ImageIO
 
@@ -10,7 +11,7 @@ struct M0ImageCoreTests {
         let description: String
     }
 
-    static func main() throws {
+    static func main() async throws {
         // Opt-in only: root must check running builds, memory and disk before this allocation.
         if CommandLine.arguments.contains("--stress-2") {
             try runStress(count: 2, sourceHeight: 1_900)
@@ -36,14 +37,28 @@ struct M0ImageCoreTests {
             ("M3-IMG-02 replacement accounts for old source and external buffers", testExternalReplacement),
             ("M3-IMG-03 composition retains actual padded stride and declared extras", testExternalComposition),
             ("M3-IMG-04 external buffer arithmetic rejects negative and overflow", testExternalOverflow),
-            ("M3-IMG-05 mutable and immutable PNG coexistence budget", testTwoPNGPeak)
+            ("M3-IMG-05 mutable and immutable PNG coexistence budget", testTwoPNGPeak),
+            ("CANCEL-IMG-01 cancellation precedes planning and allocation", testCancellationBeforeAllocation),
+            ("CANCEL-IMG-02 cancellation between source renders", testCancellationBetweenSources),
+            ("CANCEL-IMG-03 cancellation before PNG encoding", testCancellationBeforeEncoding),
+            ("CANCEL-IMG-04 cancellation after PNG encoding", testCancellationAfterEncoding),
+            ("CANCEL-IMG-05 cancellation before returning completed PNG", testCancellationBeforeResult)
+        ]
+        let asyncTests: [(String, () async throws -> Void)] = [
+            ("CANCEL-IMG-06 cancellable worker preserves output and budget", testCancellableComposition),
+            ("CANCEL-IMG-07 already cancelled caller starts no worker", testCancelledCaller),
+            ("CANCEL-IMG-08 caller cancellation reaches detached worker", testCancelledWorker)
         ]
         let start = ContinuousClock.now
         for (name, test) in tests {
             try autoreleasepool { try test() }
             print("PASS \(name)")
         }
-        print("PASS \(tests.count) groups; elapsed \(start.duration(to: .now)); in-memory synthetic images only")
+        for (name, test) in asyncTests {
+            try await test()
+            print("PASS \(name)")
+        }
+        print("PASS \(tests.count + asyncTests.count) groups; elapsed \(start.duration(to: .now)); in-memory synthetic images only")
     }
 
     static func runStress(count: Int, sourceHeight: Int) throws {
@@ -76,6 +91,67 @@ struct M0ImageCoreTests {
         } catch let error as M0ImageError {
             try expect(error == expected, "Expected \(expected), received \(error)")
         }
+    }
+
+    static func expectCancellation(_ body: () throws -> Void) throws {
+        do {
+            try body()
+            throw Failure(description: "Cancelled composition returned a result")
+        } catch is CancellationError {}
+    }
+
+    /// Only synthetic checkpoint classifications cross threads; no image or pixel data is retained.
+    final class CancellationProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private let cancellationPoint: M0CompositionCheckpoint?
+        private var points: [M0CompositionCheckpoint] = []
+
+        init(cancellationPoint: M0CompositionCheckpoint? = nil) {
+            self.cancellationPoint = cancellationPoint
+        }
+
+        func check(_ point: M0CompositionCheckpoint) throws {
+            let cancelled = lock.withLock {
+                points.append(point)
+                return point == cancellationPoint
+            }
+            if cancelled { throw CancellationError() }
+        }
+
+        var checkpoints: [M0CompositionCheckpoint] { lock.withLock { points } }
+    }
+
+    /// A finite test-only barrier keeps real synchronous work in progress while its caller cancels.
+    /// Cancellation must not claim that the framework/worker has already finished.
+    final class CancellationGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private let releaseSignal = DispatchSemaphore(value: 0)
+        private var entered = false
+        private var exited = false
+        private var cancelledAtExit = false
+        private var laterCheckpointSeen = false
+
+        func check(_ point: M0CompositionCheckpoint) throws {
+            guard point == .beforeEncoding else {
+                if point == .afterEncoding || point == .beforeResult {
+                    lock.withLock { laterCheckpointSeen = true }
+                }
+                return
+            }
+            lock.withLock { entered = true }
+            let released = releaseSignal.wait(timeout: .now() + 5) == .success
+            lock.withLock {
+                exited = true
+                cancelledAtExit = Task.isCancelled
+            }
+            guard released else { throw Failure(description: "Synthetic cancellation barrier timed out") }
+        }
+
+        func release() { releaseSignal.signal() }
+        var hasEntered: Bool { lock.withLock { entered } }
+        var hasExited: Bool { lock.withLock { exited } }
+        var observedCancellation: Bool { lock.withLock { cancelledAtExit } }
+        var reachedLaterCheckpoint: Bool { lock.withLock { laterCheckpointSeen } }
     }
 
     static func metric(_ width: Int, _ height: Int, scale: Double = 1) -> M0ImageMetrics {
@@ -455,6 +531,118 @@ struct M0ImageCoreTests {
             _ = try M0ImageComposer.validateEncodedBytes(plan: plan, pngByteCount: Int.max / 2 + 1,
                                                         isSingleImage: true, limits: unlimited)
         }
+    }
+
+    static func cancellationAssets() throws -> [M0ImageAsset] {
+        [try solid(width: 13, height: 7, red: 1, green: 0, blue: 0),
+         try solid(width: 9, height: 5, red: 0, green: 0, blue: 1),
+         try solid(width: 7, height: 3, red: 0, green: 1, blue: 0)]
+    }
+
+    static func testCancellationBeforeAllocation() throws {
+        let assets = try cancellationAssets()
+        let probe = CancellationProbe(cancellationPoint: .beforeAllocation)
+        var limits = M0ImageLimits()
+        limits.maximumImageBytes = 0 // Planning would fail if it ran before cancellation.
+        try expectCancellation {
+            _ = try M0ImageComposer.compose(assets: assets, limits: limits, checkCancellation: probe.check)
+        }
+        try expect(probe.checkpoints == [.beforeAllocation], "Cancelled work continued into planning/rendering")
+    }
+
+    static func testCancellationBetweenSources() throws {
+        let assets = try cancellationAssets()
+        let probe = CancellationProbe(cancellationPoint: .beforeSource(index: 1))
+        try expectCancellation {
+            _ = try M0ImageComposer.compose(assets: assets, checkCancellation: probe.check)
+        }
+        try expect(probe.checkpoints.contains(.beforeSource(index: 0)), "First source boundary was not reached")
+        try expect(!probe.checkpoints.contains(.beforeSource(index: 2)), "Cancelled rendering reached a later source")
+        try expect(!probe.checkpoints.contains(.beforeEncoding), "Cancelled rendering started PNG encoding")
+    }
+
+    static func testCancellationBeforeEncoding() throws {
+        let asset = try solid(width: 13, height: 7, red: 1, green: 0, blue: 0)
+        let probe = CancellationProbe(cancellationPoint: .beforeEncoding)
+        try expectCancellation {
+            _ = try M0ImageComposer.compose(assets: [asset], checkCancellation: probe.check)
+        }
+        try expect(probe.checkpoints.last == .beforeEncoding, "Cancelled work continued into PNG encoding")
+        try expect(!probe.checkpoints.contains(.afterEncoding), "PNG encoding completed after pre-encode cancellation")
+    }
+
+    static func testCancellationAfterEncoding() throws {
+        let assets = try cancellationAssets()
+        let probe = CancellationProbe(cancellationPoint: .afterEncoding)
+        var result: M0CompositionResult?
+        try expectCancellation {
+            result = try M0ImageComposer.compose(assets: assets, checkCancellation: probe.check)
+        }
+        try expect(result == nil && probe.checkpoints.last == .afterEncoding,
+                   "Cancelled ImageIO output escaped composition")
+        try expect(!probe.checkpoints.contains(.beforeResult), "Cancelled output continued to result delivery")
+    }
+
+    static func testCancellationBeforeResult() throws {
+        let assets = try cancellationAssets()
+        let probe = CancellationProbe(cancellationPoint: .beforeResult)
+        var result: M0CompositionResult?
+        try expectCancellation {
+            result = try M0ImageComposer.compose(assets: assets, checkCancellation: probe.check)
+        }
+        try expect(probe.checkpoints.contains(.afterEncoding), "Post-encoding boundary was not exercised")
+        try expect(result == nil, "Cancelled completed PNG was returned")
+    }
+
+    static func testCancellableComposition() async throws {
+        let assets = try cancellationAssets()
+        let baseline = try M0ImageComposer.compose(assets: assets, retainingExtraBytes: 137)
+        let result = try await M0ImageComposer.composeCancellable(assets: assets, retainingExtraBytes: 137)
+        try expect(result.plan == baseline.plan && result.actualImageBytes == baseline.actualImageBytes,
+                   "Cancellable worker changed the image/extra-buffer budget")
+        try expect(result.pngData == baseline.pngData, "Cancellable worker changed the synthetic PNG")
+        try expectPixel(result.image, x: result.plan.placements[0].x, y: result.plan.placements[0].y,
+                        equals: [255, 0, 0, 255])
+    }
+
+    static func testCancelledCaller() async throws {
+        let assets = try cancellationAssets()
+        let probe = CancellationProbe()
+        let caller = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await M0ImageComposer.composeCancellable(assets: assets, checkCancellation: probe.check)
+        }
+        do {
+            _ = try await caller.value
+            throw Failure(description: "Already cancelled caller returned an image")
+        } catch is CancellationError {}
+        try expect(probe.checkpoints.isEmpty, "Already cancelled caller started a composition worker")
+    }
+
+    static func testCancelledWorker() async throws {
+        let assets = try cancellationAssets()
+        let gate = CancellationGate()
+        let caller = Task {
+            try await M0ImageComposer.composeCancellable(assets: assets, checkCancellation: gate.check)
+        }
+        defer { gate.release() }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(5))
+        while !gate.hasEntered && clock.now < deadline { await Task.yield() }
+        guard gate.hasEntered else {
+            caller.cancel(); gate.release()
+            _ = try? await caller.value
+            throw Failure(description: "Detached worker did not reach the synthetic barrier")
+        }
+        caller.cancel()
+        try expect(!gate.hasExited, "Cancellation released synchronous work before it finished")
+        gate.release()
+        do {
+            _ = try await caller.value
+            throw Failure(description: "Cancelled caller returned the worker's PNG")
+        } catch is CancellationError {}
+        try expect(gate.hasExited && gate.observedCancellation, "Caller cancellation did not reach the detached worker")
+        try expect(!gate.reachedLaterCheckpoint, "Cancelled worker continued into PNG encoding/result delivery")
     }
 
     static func testFixtures() throws {

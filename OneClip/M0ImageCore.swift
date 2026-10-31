@@ -79,6 +79,16 @@ struct M0CompositionResult: @unchecked Sendable {
     let actualImageBytes: Int
 }
 
+/// Cooperative boundaries only. A synchronous CoreGraphics/ImageIO call may finish before
+/// cancellation is observed; rejecting its result does not erase its underlying storage.
+enum M0CompositionCheckpoint: Equatable, Sendable {
+    case beforeAllocation
+    case beforeSource(index: Int)
+    case beforeEncoding
+    case afterEncoding
+    case beforeResult
+}
+
 enum M0ImageError: Error, Equatable, LocalizedError, Sendable {
     case emptyCollection
     case invalidMetrics
@@ -232,25 +242,55 @@ enum M0ImageComposer {
                                  estimatedPeakBytes: max(plan.estimatedPeakBytes, acquisitionPeak))
     }
 
+    /// Cancel the detached worker explicitly and await its actual completion before returning.
+    /// Sources remain borrowed until that completion, including during synchronous framework work.
+    static func composeCancellable(assets: [M0ImageAsset], limits: M0ImageLimits = .init(),
+                                   retainingExtraBytes: Int = 0,
+                                   checkCancellation: @escaping @Sendable (M0CompositionCheckpoint) throws -> Void = { _ in })
+        async throws -> M0CompositionResult {
+        try Task.checkCancellation()
+        let worker = Task.detached(priority: .userInitiated) {
+            try compose(assets: assets, limits: limits, retainingExtraBytes: retainingExtraBytes,
+                        checkCancellation: { checkpoint in
+                            try Task.checkCancellation()
+                            try checkCancellation(checkpoint)
+                            try Task.checkCancellation()
+                        })
+        }
+        let result = try await withTaskCancellationHandler {
+            try await worker.value
+        } onCancel: {
+            worker.cancel()
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
     static func compose(assets: [M0ImageAsset], limits: M0ImageLimits = .init(),
-                        retainingExtraBytes: Int = 0) throws -> M0CompositionResult {
+                        retainingExtraBytes: Int = 0,
+                        checkCancellation: @Sendable (M0CompositionCheckpoint) throws -> Void = { _ in try Task.checkCancellation() })
+        throws -> M0CompositionResult {
+        try checkCancellation(.beforeAllocation)
         // Drain temporary Objective-C/bridging objects before handing the retained result to callers.
         // ImageIO's private allocations and allocator retention are not a process-memory guarantee.
-        try autoreleasepool {
+        let result = try autoreleasepool {
             let plan = try makePlan(assets: assets, limits: limits, retainingExtraBytes: retainingExtraBytes)
             let image: CGImage
             if assets.count == 1 {
                 image = assets[0].image
             } else {
-                image = try render(assets: assets, plan: plan)
+                image = try render(assets: assets, plan: plan, checkCancellation: checkCancellation)
             }
+            try checkCancellation(.beforeEncoding)
             let buffer = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(buffer as CFMutableData,
                                                                    UTType.png.identifier as CFString, 1, nil) else {
                 throw M0ImageError.encodingFailed
             }
             CGImageDestinationAddImage(destination, image, nil)
-            guard CGImageDestinationFinalize(destination) else { throw M0ImageError.encodingFailed }
+            let encoded = CGImageDestinationFinalize(destination)
+            try checkCancellation(.afterEncoding)
+            guard encoded else { throw M0ImageError.encodingFailed }
             // Check the actual encoded length, including a second PNG store, before copying it.
             let retainedBytes = try validateEncodedBytes(plan: plan, pngByteCount: buffer.length,
                                                        isSingleImage: assets.count == 1, limits: limits)
@@ -258,6 +298,9 @@ enum M0ImageComposer {
             let pngData = Data(referencing: buffer)
             return M0CompositionResult(image: image, pngData: pngData, plan: plan, actualImageBytes: retainedBytes)
         }
+        // Includes cancellation during the immutable Data copy or autorelease-pool cleanup.
+        try checkCancellation(.beforeResult)
+        return result
     }
 
     static func validateEncodedBytes(plan: M0CompositionPlan, pngByteCount: Int,
@@ -278,8 +321,10 @@ enum M0ImageComposer {
         return retainedBytes
     }
 
-    private static func render(assets: [M0ImageAsset], plan: M0CompositionPlan) throws -> CGImage {
+    private static func render(assets: [M0ImageAsset], plan: M0CompositionPlan,
+                               checkCancellation: @Sendable (M0CompositionCheckpoint) throws -> Void) throws -> CGImage {
         let stride = try multiply(plan.width, 4)
+        try checkCancellation(.beforeAllocation)
         guard let context = makeContext(width: plan.width, height: plan.height, bytesPerRow: stride) else {
             throw M0ImageError.contextCreationFailed
         }
@@ -288,6 +333,7 @@ enum M0ImageComposer {
         context.interpolationQuality = .none
         context.setShouldAntialias(false)
         for placement in plan.placements {
+            try checkCancellation(.beforeSource(index: placement.index))
             context.draw(assets[placement.index].image,
                          in: CGRect(x: CGFloat(placement.x),
                                     y: CGFloat(plan.height - placement.y - placement.height),
@@ -297,6 +343,7 @@ enum M0ImageComposer {
                          x: 16, baseline: CGFloat(plan.height - numberTop - 18), context: context)
             }
         }
+        try checkCancellation(.beforeAllocation)
         guard let image = context.makeImage() else { throw M0ImageError.contextCreationFailed }
         return image
     }

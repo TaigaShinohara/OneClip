@@ -107,3 +107,26 @@ XcodeはCoreSimulatorサービスの版不一致とSimulatorサポート無効�
 固定描画から実スクロール・フォーカス・実入力・VoiceOver・OSのコントラスト伝播・実撮影・一般クリップボード・権限遷移の成功へ広げません。人間による変更前後の理解・テンポ・好みの比較、厳密画質・性能・全OS／CPUの実行確認は未実施です。コピー後保持は現在の素材だけで、ファイル保存・画像履歴・自動復元・通信を追加していません。画像バッファ384MiBは見積予算で、RSS上限や即時完全消去を保証しません。失効後のworker借用は実処理返却まで残る場合があり、結果は採用しません。
 
 今回の個別UX改善の実装・内部検証を、M4総合・対象Collection VoiceOver・一般向け配布の受入へ読み替えません。従来の未実証・未解明事項と保留を維持します。
+
+## 画像取消とセキュリティ検証の限定更新（2026-10-31）
+
+開始版`01f8455f`の製品・試験・文書と、ローカル取得済み公開refsから到達する履歴を静的に再確認しました。
+確定した脆弱性はありませんでした。未知形式の秘密値、未取得refs、実OSの全経路を検査済みとはしません。
+
+単発・収集の画像処理に共通の取消workerを接続しました。呼出し側の取消をdetached処理へ伝え、allocation前・素材描画間・
+PNG生成前後・返却前で確認します。同期framework処理の途中停止や物理消去は保証せず、実処理が返るまで共有枠を保持します。
+
+### 確認した範囲
+
+- Swift 6厳密並行性の12スイートが成功。画像24群、単発40群、収集38群を含み、収集では全9種の注入イベントについて54保持状態・36遅延結果を追加確認しました。残るキー・scope・プレビュー・座標・予算・両monitor・通知境界・専用pasteboardも直列実行しました。
+- 配布preflightのPython27試験と、公開用コピーの既存7試験が成功。未知・不正な署名／entitlement・tool失敗・公証失敗を拒否し、承認済みTeamとbundle ID、全architecture、対象manifestへ成功結果を結び付けます。
+- macOS27.2／Apple Siliconで、架空NSWindowの可視・移動・resize・所有世代・非表示・閉鎖・最小化の7群が成功。既存許可だけを使う実ScreenCaptureKitの架空不透明範囲取得でも、色一致・自overlay除外・前面アプリ保持を確認しました。画像保存・一般pasteboard・許可要求は行っていません。
+- Debugの署名なしbuildと、arm64／x86_64両方を含むReleaseのDeveloper ID署名buildが成功。両sliceのminOS14.0を確認し、実候補でApple署名chainと承認Team／ID、Hardened Runtime、secure timestamp、Sandbox、デバッグ・network等の不要権限の不在を検査しました。`signed`preflightは成功しました。
+- 架空4素材の所有権診断はwarmup2回＋測定30回で失敗0。各回の追跡source provider・batch・output参照の解放を確認しました。malloc使用中量は測定先頭・末尾とも452,048Bでした。一方、解放後RSSは56,705,024→125,698,048Bへ増加し、30秒idle後も125,911,040Bでした。PNG backing・ImageIO cache・allocatorの実回収や、無期限反復の安定性をこの結果から合格にしません。
+
+### 残る条件
+
+実lock／FUS／同一processのTCC遷移と実SCK処理中の全matrix、最低OS／Intel実機、製品全体の資源基準と反復は未完了です。
+Developer ID署名の成功は、公証・stapled ticket・Gatekeeperの新規環境起動・offline起動の成功ではありません。
+全面VoiceOver、M4総合の体験評価、一般向け配布の受入も別に残します。
+安全条件と再現コマンドは[セキュリティ検証](SECURITY-VERIFICATION.md)を参照してください。
