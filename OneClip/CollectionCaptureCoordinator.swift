@@ -176,6 +176,34 @@ final class CollectionCaptureCoordinator: ObservableObject {
         }
         return total
     }
+    /// Includes completed outputs and comparison candidates owned outside the source set.
+    /// Annotation editing keeps those owners alive, unlike a new single capture.
+    var annotationRetainedImageBytes: Int {
+        var total = retainedImageBytes
+        var seen = Set(assets.map { ObjectIdentifier($0.image) })
+        for borrow in retiredImageBorrows {
+            if let image = borrow.image { seen.insert(ObjectIdentifier(image)) }
+        }
+        func addBytes(_ bytes: Int) -> Bool {
+            let sum = total.addingReportingOverflow(bytes)
+            guard bytes >= 0, !sum.overflow else { return false }
+            total = sum.partialValue
+            return true
+        }
+        func addImage(_ image: CGImage) -> Bool {
+            guard seen.insert(ObjectIdentifier(image)).inserted else { return true }
+            let bytes = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
+            return !bytes.overflow && addBytes(bytes.partialValue)
+        }
+        if let completed {
+            guard addImage(completed.image), addBytes(completed.pngData.count) else { return Int.max }
+        }
+        if let candidate = pendingReplacement?.candidate {
+            guard addImage(candidate.image) else { return Int.max }
+        }
+        return total
+    }
+
     func prepareForSingleCapture() -> Bool {
         guard canStartSingle else { return false }
         if hasRetainedImages {

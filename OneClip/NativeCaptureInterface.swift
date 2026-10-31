@@ -37,11 +37,11 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var settingsBlockCapture: (@MainActor () -> Bool)?
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
     var collectionCopyBlocked: Bool {
-        CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
+        CaptureAnnotationController.shared.blocksCapture || CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     var captureEntryBlocked: Bool {
-        CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
+        CaptureAnnotationController.shared.blocksCapture || CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?
@@ -148,6 +148,7 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func environmentDidChange(_ event: CaptureEnvironmentEvent) {
+        CaptureAnnotationController.shared.invalidate()
         CaptureResultController.shared.environmentDidChange()
         coordinator?.environmentDidChange(event)
         collectionCoordinator?.environmentDidChange(event)
@@ -886,7 +887,7 @@ private struct CaptureGuideInstructions: View {
             guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
                       message: collection
                         ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
-                        : "1つの画面内でドラッグし、離すとコピー・保存します。右下のプレビューから画像を編集できます。")
+                        : "1つの画面内でドラッグし、離すとコピー・保存します。右下のプレビューからコメントや記号を追加できます。")
             Divider()
             guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "完成画像を確認してコピー" : "矢印でも選べます",
                       message: collection

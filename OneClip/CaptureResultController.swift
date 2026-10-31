@@ -3,7 +3,7 @@ import Combine
 import ImageIO
 import SwiftUI
 
-enum CaptureResultMode: Hashable { case single, collection }
+enum CaptureResultMode: Hashable { case single, collection, annotation }
 
 /// A single pending PNG is owned until its worker finishes or a failed save is resolved.
 /// The thumbnail owns only a downsampled image; saved images are represented by URLs.
@@ -145,6 +145,19 @@ final class CaptureResultController: ObservableObject {
         }
     }
 
+    func savedURL(for id: UUID, mode: CaptureResultMode) -> URL? {
+        guard let record = savedResults[mode], record.id == id,
+              FileManager.default.fileExists(atPath: record.url.path) else { return nil }
+        return record.url
+    }
+
+    func annotateLatest() {
+        guard let url = latestURL else { return }
+        let editor = CaptureAnnotationController.shared
+        if editor.open(url) { dismissPreview() }
+        else { showError("注釈画面を開けませんでした", detail: editor.statusText) }
+    }
+
     func editLatest() {
         guard let original = latestURL else { return }
         let sourceID = recordID
@@ -194,7 +207,7 @@ final class CaptureResultController: ObservableObject {
         }
         panel?.contentView = NSHostingView(rootView: CaptureResultView(
             image: thumbnail, message: message, failed: hasPendingSave, saving: isSaving,
-            edit: { [weak self] in guard self?.revision == token else { return }; self?.editLatest() },
+            edit: { [weak self] in guard self?.revision == token else { return }; self?.annotateLatest() },
             close: { [weak self] in guard self?.revision == token else { return }; self?.dismissPreview() },
             retry: { [weak self] in guard self?.revision == token else { return }; self?.retrySave() },
             discard: { [weak self] in guard self?.revision == token else { return }; self?.discardUnsaved() }))
@@ -263,14 +276,14 @@ private struct CaptureResultView: View {
                 .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain).disabled(failed)
-            .accessibilityLabel("撮影画像をプレビューで編集")
+            .accessibilityLabel("撮影画像にコメント・記号を追加")
             if failed {
                 HStack {
                     Button(saving ? "保存中…" : "保存を再試行", action: retry).disabled(saving)
                     Button("保存せずに続ける", action: discard).disabled(saving)
                 }.font(.caption)
             } else {
-                Button("プレビューで編集", systemImage: "pencil.tip.crop.circle", action: edit)
+                Button("コメント・記号を追加", systemImage: "text.bubble", action: edit)
                     .font(.callout)
             }
         }

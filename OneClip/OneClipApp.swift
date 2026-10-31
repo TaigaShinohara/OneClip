@@ -10,6 +10,7 @@ struct OneClipApp: App {
     @StateObject private var collection = CollectionCaptureCoordinator.shared
     @StateObject private var keys = ProductHotKeyController.shared
     @StateObject private var result = CaptureResultController.shared
+    @StateObject private var annotation = CaptureAnnotationController.shared
     var body: some Scene {
         MenuBarExtra {
             Text("OneClip — まとめ撮りbeta 開発中")
@@ -22,8 +23,13 @@ struct OneClipApp: App {
                 Button(result.isSaving ? "画像を保存中…" : "画像の保存を再試行") { result.retrySave() }.disabled(result.isSaving)
                 Button("保存せずに続ける") { result.discardUnsaved() }.disabled(result.isSaving)
             }
-            Button("最新の画像をプレビューで編集…") { result.editLatest() }
-                .disabled(result.latestURL == nil)
+            Button("最新の画像にコメント・記号を追加…") { result.annotateLatest() }
+                .disabled(result.latestURL == nil || result.isSaving || result.hasPendingSave)
+            if annotation.isOpen {
+                Button("コメント・記号の編集画面を表示…") { annotation.show() }
+            }
+            Button("保存した画像を標準プレビューで編集…") { result.editLatest() }
+                .disabled(result.latestURL == nil || annotation.blocksCapture)
             Button("保存フォルダを開く") { result.openFolder() }
             Divider()
             Button { OneClipModeActions.single() } label: {
@@ -181,6 +187,21 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
                 collection?.objectWillChange.send()
             }
         }.store(in: &stateSubscriptions)
+        let annotation = CaptureAnnotationController.shared
+        annotation.canOpen = {
+            !capture.isWorking && !capture.hasRetainedImage && !collection.isWorking && collection.canStartSingle
+                && !CaptureWorkerSlot.shared.isOccupied
+                && ![.selecting, .permission, .onboarding].contains(capture.phase)
+                && ![.selecting, .permission, .onboarding].contains(collection.phase)
+                && !interface.hasDiscardConfirmation && !interface.collectionConfirmationPending
+        }
+        annotation.externalRetainedBytes = { collection.annotationRetainedImageBytes }
+        annotation.objectWillChange.sink { [weak capture, weak collection] _ in
+            MainActor.assumeIsolated {
+                capture?.objectWillChange.send()
+                collection?.objectWillChange.send()
+            }
+        }.store(in: &stateSubscriptions)
         let keys = ProductHotKeyController.shared
         keys.deliveryAllowed = {
             OneClipModeActions.canStartSingle
@@ -215,6 +236,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !awaitingQuitDecision else { return .terminateLater }
+        guard CaptureAnnotationController.shared.requestClose() else { return .terminateCancel }
         guard CaptureResultController.shared.prepareToQuit() else { return .terminateCancel }
         let interface = NativeCaptureInterface.shared
         guard !interface.collectionConfirmationPending, !interface.hasDiscardConfirmation else { return .terminateCancel }
@@ -247,6 +269,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        CaptureAnnotationController.shared.invalidate()
         CaptureResultController.shared.environmentDidChange()
         ProductHotKeyController.shared.stop()
         CaptureSettingsController.shared.hide()
