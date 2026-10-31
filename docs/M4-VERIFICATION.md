@@ -275,7 +275,7 @@ upgrade/rollbackは必須残件です。M4総合・対象Collection VoiceOverの
 | 候補ZIP SHA-256 | `31757ca5f336d7f6bc845ee2a758590416c3e408af68fab3efea00f23328c5f1`（1,323,115 bytes） |
 | ビルドと署名preflight | 署名なしDebugとDeveloper IDのuniversal Releaseが成功。ZIP再展開後も同じapp manifestで検証成功 |
 | 最低OS設定 | 両architectureのload commandが14.0、SDKが27.2であることを確認。macOS14実行・Intel実機の代替ではない |
-| 新候補の公証・staple | 未実施。独立照合と候補固定の後に扱う。旧候補のAcceptedを新しい製品入力へ流用しない |
+| 新候補の公証・staple | 同候補のApple Accepted・指摘0件、staple・distribution preflight成功。[後続の検証結果](#security-integrated-notarization-20261031)を参照 |
 | インストール・一般配布 | 未実施 |
 
 製品入力・署名app・ZIPの対応と、内部の試験log・署名者情報を分離して保存します。
@@ -302,3 +302,33 @@ Runtimeの成功を保存・注釈・通常Viewの実OS受入へ拡張しませ�
 
 列挙した局所修正と自動試験の成功、当該Macの限定実機受入、宣言環境全体の受入は別判定です。
 未解決の資源基準、実SCKの失敗、本人延期と未保有環境が残るため、計画全体は未完了です。
+
+
+<a id="security-integrated-notarization-20261031"></a>
+## 保存・注釈を含む統合候補の公証検証（2026-10-31）
+
+製品ソース`b39d2a48fc874fb67aa2572f5e51a7dc5ea3306a`と、製品入力SHA-256
+`a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08`に対応する同じuniversal Release候補を検証しました。
+アプリのコード・識別子・entitlement・署名を再生成せず、固定済みZIPをAppleへ提出しました。
+検証環境はmacOS27.2／arm64で、両architectureの署名とticketを照合しています。
+
+| 段階 | 結果とSHA-256 |
+| --- | --- |
+| 提出ZIP | `31757ca5f336d7f6bc845ee2a758590416c3e408af68fab3efea00f23328c5f1`、1,323,115 bytes |
+| 提出前app manifest | `26d5e12da850192d4240f5f4a547ab1c2fb66dd9f9f459b8634164b922ef4e11` |
+| Apple公証 | `Accepted`、指摘0件。同じ提出IDのlogのZIP SHA-256が提出物と一致 |
+| ticketとの対応 | x86_64／arm64の実CodeDirectory hashがApple logのticket内容に一致 |
+| staple後app manifest | `83b283a880177e5207ee0a58c0bbee9545d2e1c7dca103ff36de45ac61a8c08e` |
+| 最終ZIP | `dde1e56e052b77adaa89de761ac35b3d34594e1210e143cd851c97f727c8f20e`、1,325,693 bytes |
+
+- 提出ZIPを再展開し、署名preflightとapp manifestを提出前記録へ照合しました。
+- ticketのstapleとvalidateが成功しました。`distribution` preflightは11項目すべて成功し、
+  承認された署名Team／bundle ID、両architectureの厳密署名・最小entitlements・Hardened Runtime・timestamp、
+  stapled ticket、Gatekeeper有効、raw plistのboolean verdictと`Notarized Developer ID`、検査中のapp不変を確認しました。
+- staple後appから最終ZIPを作り、別directoryへ再展開したappでも同じstaple後manifestと11項目の成功を確認しました。
+- 製品入力と元の提出ZIPは検証後も変わっていません。署名・公証の証拠はこの固定候補に限ります。
+
+これは同候補の公証・ticket・Gatekeeper preflightの成功です。アプリの起動・インストール・一般配布は行っていません。
+quarantine付き新規環境の初回起動、offline初回起動、最低OS／Intel実機、実OS遷移matrix、実GUIの受入は未実証です。
+未説明のRSS／footprint増加、cold Viewの応答基準超過、実SCKの1px不一致は未解決のまま保持します。
+公証の成功をこれらの解消、M4総合・Collection VoiceOver・宣言環境全体の受入へ拡張しません。
