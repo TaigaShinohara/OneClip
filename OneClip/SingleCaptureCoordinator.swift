@@ -126,12 +126,16 @@ final class SingleCaptureCoordinator: ObservableObject {
         }
         #endif
         let value = SingleCaptureCoordinator(capturer: ScreenshotService(), interface: interface)
+        value.onCaptureResult = { CaptureResultController.shared.receive($0, copied: $1, id: $2, mode: .single) }
         interface.coordinator = value
         #if DEBUG
         value.practiceScopeProvider = { [weak interface] display in try interface?.practiceScope(for: display) }
         #endif
         return value
     }()
+
+    /// Installed only in the production coordinator; tests and failure labs stay isolated.
+    var onCaptureResult: (@MainActor (Data, Bool, UUID) -> Void)?
 
     @Published private(set) var phase = SingleCapturePhase.idle
     @Published private(set) var statusText = "範囲を選んでコピーできます"
@@ -174,6 +178,7 @@ final class SingleCaptureCoordinator: ObservableObject {
     private var operationID: UUID?
     private var worker: Task<Void, Never>?
     private var selectionDisplay: CaptureDisplaySnapshot?
+    private var captureResultID = UUID()
     private var retainedAsset: M0ImageAsset?
     private var retainedPNG: Data?
     private var isStopping = false
@@ -486,6 +491,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                 _ = try CaptureImageBudgetContext(retainingExtraBytes: self.externalRetainedBytes())
                     .validateCandidate(asset.metrics, limits: self.limits)
                 self.retainedAsset = asset
+                if existing == nil { self.captureResultID = UUID() }
                 self.phase = .encoding
                 self.statusText = "画像を準備しています…"
                 let data: Data
@@ -516,7 +522,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                     self.interface.hideProblem()
                     let text = self.preferences.hasSeenPasteHint ? "コピーしました" : "コピーしました。Command + Vで貼り付けられます"
                     self.preferences.hasSeenPasteHint = true
-                    self.interface.showFeedback(text)
+                    if self.onCaptureResult == nil { self.interface.showFeedback(text) }
                     if self.interface.isOneClipActive { self.interface.returnToExternalApplication() }
                 } else {
                     let conflict = result.code == .conflictBeforePrepare || result.code == .conflictAfterPrepare
@@ -524,6 +530,7 @@ final class SingleCaptureCoordinator: ObservableObject {
                                        : "画像をコピーできませんでした。取得画像は保持しています。",
                               clipboardMayHaveChanged: result.prepared, stage: .clipboard)
                 }
+                self.onCaptureResult?(data, result.writeAccepted, self.captureResultID)
             } catch {
                 guard self.operationID == identifier, !self.isStopping else { return }
                 guard self.validateEnvironment(), self.operationID == identifier else { return }
