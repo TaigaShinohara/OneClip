@@ -403,8 +403,11 @@ def verify_app(app, *, stage, policy, expected_team_id, expected_bundle_id, runn
                                       "--ignore-cache", "--no-cache", "--raw", str(artifact.path)))
                 value = dictionary_plist(output_plist(result))
                 authority = value.get("assessment:authority")
+                # SecAssessment.cpp defines the namespaced key even inside the
+                # authority dictionary. The human-readable `source=` display is
+                # not the raw plist schema; do not accept that short-key alias.
                 if (value.get("assessment:verdict") is not True or not isinstance(authority, dict)
-                        or authority.get("source") != "Notarized Developer ID"):
+                        or authority.get("assessment:authority:source") != "Notarized Developer ID"):
                     raise VerificationFailure("notarized_policy_verdict_required")
             check("notarized_gatekeeper_assessment", assessment)
 
