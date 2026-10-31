@@ -130,3 +130,16 @@ PNG生成前後・返却前で確認します。同期framework処理の途中�
 Developer ID署名の成功は、公証・stapled ticket・Gatekeeperの新規環境起動・offline起動の成功ではありません。
 全面VoiceOver、M4総合の体験評価、一般向け配布の受入も別に残します。
 安全条件と再現コマンドは[セキュリティ検証](SECURITY-VERIFICATION.md)を参照してください。
+
+## 配布候補の公証とGatekeeper検証（2026-10-31）
+
+製品ソース`9cd1612`に対応する同じuniversal Release候補を対象に、macOS27.2／Apple Siliconで限定検証しました。
+既存bundle IDは`local.OneClip`です。検証器の修正でアプリのコードや署名を作り直していません。
+
+- Apple公証は`Accepted`、同じ提出IDのlogも`Accepted`で指摘0件。logのZIP SHA-256が提出物の`845a8d388f77e7e79e47dc89f34a8819b85e0208d520f70a06875a5fae6e1f86`と一致しました。両architectureのCodeDirectory hashもlogのticket内容と一致しました。
+- そのZIPを展開したappのmanifestは、提出前の`b6119456c490cd91250d28429f7afb8342e7c75737732ab918855ca8188b8ef6`と一致。ticketのstapleとvalidateが成功し、staple後のmanifestは`4278d4aa755ddae24b19f861fffb73520e04ac04e481a10fdf0cdb6093a72c9d`でした。
+- 実Gatekeeperのraw plistが返すnamespaced keyを、検証器が短縮した`source`として誤読する問題を修正しました。初回の誤拒否を成功として扱わず、実形式の正常系と誤key・source・verdict拒否の回帰を追加し、Python30試験が成功しました。
+- 修正版の`distribution`preflightは、全architectureの厳密署名・承認Team／ID・実entitlements、ticket、Gatekeeper有効、booleanの肯定判定と`Notarized Developer ID`、検査中のapp不変をすべて通過しました。
+- staple後appから作った最終ZIPのSHA-256は`f9cb2d00186a01ad42b2fc375aae66cc7f2ccfee0cba98b70cf1a24d985fe8ec`です。再展開したappも同じstaple後manifestと一致し、`distribution`preflightが成功しました。
+
+この結果は当該候補の公証・ticket・Gatekeeperのpreflightです。新規環境でquarantine付きの実起動、offline初回起動、最低OS／Intel実機、全OS遷移matrix、資源総合は未実証のままです。M4総合・Collection VoiceOver・一般向け配布の受入へ拡張しません。
