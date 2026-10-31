@@ -43,16 +43,22 @@ struct CaptureAnnotationControllerTests {
         let clipboard: Clipboard
         let environment: Environment
         let controller: CaptureAnnotationController
-        init(root: URL, name: String, saveWorks: Bool = true, showsWindow: Bool = false) throws {
+        init(root: URL, name: String, saveWorks: Bool = true, showsWindow: Bool = false,
+             securityTrace: CaptureSecurityTrace = .disabled, limits: M0ImageLimits = .init(),
+             loader: (@Sendable (URL, M0ImageLimits, Int) throws -> M0ImageAsset)? = nil,
+             renderer: (@Sendable (M0ImageAsset, [CaptureAnnotation], M0ImageLimits, Int) throws -> M0CompositionResult)? = nil,
+             saver: (@Sendable (Data) throws -> URL)? = nil) throws {
             let directory = root.appendingPathComponent(name, isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let sourceURL = directory.appendingPathComponent("capture-original.png")
             let encoded = try M0ImageComposer.compose(assets: [M0ImageFixture.make(index: 1, width: 1000, height: 600)]).pngData
             let outputArchive = CaptureArchive(directory: directory.appendingPathComponent("outputs"))
-            let outputResults = CaptureResultController(archive: outputArchive, previewsEnabled: false)
+            let outputResults = CaptureResultController(archive: outputArchive, previewsEnabled: false,
+                securityTrace: securityTrace, saver: saver)
             let injectedClipboard = Clipboard()
             let injectedEnvironment = Environment()
             try encoded.write(to: sourceURL)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: sourceURL.path)
             if !saveWorks { try Data([0]).write(to: outputArchive.directory) }
             source = sourceURL
             sourcePNG = encoded
@@ -61,7 +67,8 @@ struct CaptureAnnotationControllerTests {
             clipboard = injectedClipboard
             environment = injectedEnvironment
             controller = CaptureAnnotationController(results: outputResults, clipboard: injectedClipboard, showsWindow: showsWindow,
-                                                     environmentCheck: { injectedEnvironment.available })
+                environmentCheck: { injectedEnvironment.available }, securityTrace: securityTrace, limits: limits,
+                loader: loader, renderer: renderer)
         }
         func load() async throws {
             controller.open(source)
@@ -101,7 +108,17 @@ struct CaptureAnnotationControllerTests {
         print("PASS ANNOTATION-DOC-08 a new document exports its own pixels rather than a previous result URL")
         try await testSynchronousEnvironmentFences(root)
         print("PASS ANNOTATION-DOC-09 reopen, show, Undo and Redo synchronously invalidate unavailable images")
-        print("PASS 9 annotation controller groups; injected clipboard and synthetic files only")
+        try await testQueuedInvalidation(root)
+        print("PASS ANNOTATION-DOC-10 invalidated queued tasks never start a file load")
+        try await testGatedWorkerLeases(root)
+        print("PASS ANNOTATION-DOC-11 load and render keep their finite lease until real uncooperative worker return")
+        try await testFreshExternalBudget(root)
+        print("PASS ANNOTATION-DOC-12 fresh external capacity loss rejects late load and render adoption")
+        try await testHandoffOwnership(root)
+        print("PASS ANNOTATION-DOC-13 flattened output handoff includes annotation ownership and independent save worker retention")
+        try await testPrivateFailure(root)
+        print("PASS ANNOTATION-DOC-14 raw dependency errors do not enter visible status or trace")
+        print("PASS 14 annotation controller groups; injected clipboard and synthetic files only")
     }
     static func expect(_ value: @autoclosure () -> Bool, _ message: String) throws {
         guard value() else { throw Failure(description: message) }
@@ -361,6 +378,168 @@ struct CaptureAnnotationControllerTests {
                        && h.clipboard.calls == 0,
                        "A public editing action retained or revived an unavailable document")
         }
+    }
+
+    final class Gate: @unchecked Sendable {
+        private let condition = NSCondition()
+        private var entered = false, released = false
+        var isWaiting: Bool { condition.lock(); defer { condition.unlock() }; return entered && !released }
+        func pause() {
+            condition.lock(); defer { condition.unlock() }
+            entered = true; condition.broadcast()
+            while !released { condition.wait() }
+        }
+        func release() { condition.lock(); released = true; condition.broadcast(); condition.unlock() }
+    }
+    final class Count: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+        func increment() { lock.lock(); count += 1; lock.unlock() }
+    }
+
+    static func testQueuedInvalidation(_ root: URL) async throws {
+        let calls = Count()
+        let h = try Harness(root: root, name: "queued-load", loader: { _, _, _ in
+            calls.increment()
+            return try M0ImageFixture.make(index: 1, width: 1000, height: 600)
+        })
+        try expect(h.controller.open(h.source), "Queued load did not start its admission gate")
+        h.controller.invalidate()
+        await h.controller.waitForWorker()
+        try expect(calls.value == 0 && !h.controller.isWorking && !h.controller.blocksCapture
+                   && h.controller.retainedImageBytes == 0, "Invalidated queued task started new image work")
+    }
+
+    static func testGatedWorkerLeases(_ root: URL) async throws {
+        typealias Loader = @Sendable (URL, M0ImageLimits, Int) throws -> M0ImageAsset
+        typealias Renderer = @Sendable (M0ImageAsset, [CaptureAnnotation], M0ImageLimits, Int) throws -> M0CompositionResult
+        for rendering in [false, true] {
+            let gate = Gate(); defer { gate.release() }
+            let trace = CaptureSecurityTrace(enabled: true, trial: 1)
+            let loader: Loader?
+            let renderer: Renderer?
+            if rendering {
+                loader = nil
+                renderer = { image, notes, limits, extra in
+                    gate.pause()
+                    return try CaptureAnnotationRenderer.render(image: image.image, annotations: notes, limits: limits,
+                        retainingExtraBytes: extra, checkCancellation: {})
+                }
+            } else {
+                loader = { _, _, _ in
+                    gate.pause()
+                    // Deliberately ignore cancellation; the product wrapper must still join/reject.
+                    return try M0ImageFixture.make(index: 1, width: 1000, height: 600)
+                }
+                renderer = nil
+            }
+            let h = try Harness(root: root, name: rendering ? "gated-render" : "gated-load",
+                securityTrace: trace, loader: loader, renderer: renderer)
+            h.controller.open(h.source)
+            if rendering {
+                await h.controller.waitForWorker()
+                h.draft(); h.controller.applyComment(); h.controller.saveAndCopy()
+            }
+            try await waitUntil { gate.isWaiting }
+            let before = h.controller.retainedImageBytes
+            try expect(before > 0 && h.controller.isWorking, "Live worker had no image lease")
+            h.controller.invalidate()
+            try expect(h.controller.isWorking && h.controller.blocksCapture && h.controller.image == nil
+                       && h.controller.retainedImageBytes >= before, "Invalidation dropped the real worker lease")
+            try expect(!h.controller.open(h.source), "A replacement document overlapped the cancelled worker")
+            gate.release()
+            await h.controller.waitForWorker()
+            try expect(!h.controller.isWorking && !h.controller.blocksCapture && h.controller.retainedImageBytes == 0
+                       && h.clipboard.calls == 0 && h.results.latestURL == nil,
+                       "Old worker returned pixels, clipboard or document ownership after invalidation")
+            let rows = trace.snapshot().entries
+            let invalidated = rows.last(where: { $0.code == .annotationInvalidated })!.sequence
+            try expect(!rows.contains { $0.sequence > invalidated && [.annotationResultAdopted, .annotationViewDraw, .clipboardWrite].contains($0.code) }
+                       && trace.snapshot().droppedCount == 0, "Late annotation consumer used an invalidated result")
+        }
+    }
+
+    static func testFreshExternalBudget(_ root: URL) async throws {
+        typealias Loader = @Sendable (URL, M0ImageLimits, Int) throws -> M0ImageAsset
+        typealias Renderer = @Sendable (M0ImageAsset, [CaptureAnnotation], M0ImageLimits, Int) throws -> M0CompositionResult
+        for rendering in [false, true] {
+            let gate = Gate(); defer { gate.release() }
+            let loader: Loader?
+            let renderer: Renderer?
+            if rendering {
+                loader = nil
+                renderer = { image, notes, limits, extra in
+                    gate.pause(); return try CaptureAnnotationRenderer.render(image: image.image, annotations: notes,
+                        limits: limits, retainingExtraBytes: extra)
+                }
+            } else {
+                loader = { _, _, _ in
+                    gate.pause(); return try M0ImageFixture.make(index: 1, width: 1000, height: 600)
+                }
+                renderer = nil
+            }
+            let h = try Harness(root: root, name: rendering ? "fresh-render" : "fresh-load", loader: loader, renderer: renderer)
+            var external = 0
+            h.controller.externalRetainedBytes = { external }
+            h.controller.open(h.source)
+            if rendering { await h.controller.waitForWorker(); h.draft(); h.controller.applyComment(); h.controller.saveAndCopy() }
+            try await waitUntil { gate.isWaiting }
+            external = Int.max
+            gate.release(); await h.controller.waitForWorker()
+            try expect(h.clipboard.calls == 0 && h.results.latestURL == nil
+                       && (rendering ? h.controller.image != nil : h.controller.image == nil),
+                       "Stale external image budget permitted late result adoption or export")
+            h.controller.invalidate()
+            try expect(h.controller.retainedImageBytes == 0, "Rejected fresh budget retained image ownership")
+        }
+    }
+
+    static func testHandoffOwnership(_ root: URL) async throws {
+        let gate = Gate(); defer { gate.release() }
+        let name = "handoff-owner"
+        let archive = CaptureArchive(directory: root.appendingPathComponent(name).appendingPathComponent("outputs"))
+        let trace = CaptureSecurityTrace(enabled: true, trial: 1)
+        let h = try Harness(root: root, name: name, securityTrace: trace, saver: { png in
+            gate.pause(); return try archive.save(png)
+        })
+        let controller = h.controller
+        h.results.externalRetainedBytes = { [weak controller] in controller?.retainedImageBytes ?? 0 }
+        try await h.load()
+        let sourceBytes = controller.image!.image.bytesPerRow * controller.image!.image.height
+        h.draft(); controller.applyComment(); controller.saveAndCopy()
+        try await waitUntil { gate.isWaiting }
+        let pngBytes = h.clipboard.payloads.last?.count ?? 0
+        try expect(pngBytes > 0 && controller.isWorking && h.results.isSaving
+                   && controller.retainedImageBytes >= sourceBytes * 2 + pngBytes,
+                   "Handoff dropped the live source, flattened output or PNG before actual return")
+        controller.invalidate(); h.results.environmentDidChange()
+        await controller.waitForWorker()
+        try expect(controller.retainedImageBytes == 0 && h.results.isSaving && h.results.retainedImageBytes > 0,
+                   "Annotation cancellation dropped the independent live save worker's ownership")
+        gate.release(); try await waitUntil { !h.results.isSaving }
+        try expect(h.results.retainedImageBytes == 0 && h.results.latestURL == nil
+                   && !h.results.hasPendingSave && !h.results.isPreviewVisible,
+                   "Obsolete saved result revived memory/UI ownership")
+        let files = try FileManager.default.contentsOfDirectory(at: archive.directory, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "png" }
+        guard files.count == 1 else { throw Failure(description: "Explicit durable save did not finish exactly once") }
+        let bytes = try Data(contentsOf: files[0])
+        try expect(bytes == h.clipboard.payloads[0], "Saved annotation differed from the flattened clipboard PNG")
+    }
+
+    static func testPrivateFailure(_ root: URL) async throws {
+        let trace = CaptureSecurityTrace(enabled: true, trial: 1)
+        let h = try Harness(root: root, name: "private-loader-error", securityTrace: trace, loader: { _, _, _ in
+            throw NSError(domain: "synthetic", code: 1, userInfo: [NSLocalizedDescriptionKey: "SYNTHETIC_RAW_ERROR_MARKER"])
+        })
+        h.controller.open(h.source); await h.controller.waitForWorker()
+        try expect(!h.controller.statusText.contains("SYNTHETIC_RAW_ERROR_MARKER") && h.controller.image == nil,
+                   "Raw dependency error entered visible annotation status")
+        let encoded = try JSONEncoder().encode(trace.snapshot().entries)
+        try expect(!String(decoding: encoded, as: UTF8.self).contains("SYNTHETIC_RAW_ERROR_MARKER"),
+                   "Raw dependency error entered fixed annotation trace")
+        h.controller.invalidate()
     }
     /// Pump this process's event loop so AppKit and SwiftUI can commit their own layers.
     /// No display pixels, other processes, or screenshot APIs are accessed.

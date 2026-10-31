@@ -53,7 +53,8 @@ struct SingleCaptureCoordinatorTests {
             ("UX-SINGLE-06 actual encoded size cannot bypass the shared budget", testActualEncodedBudget),
             ("UX-SINGLE-07 activation refreshes permission without starting capture", testPermissionRefresh),
             ("RESULT-SINGLE-01 exact PNG and clipboard result publish independently with retry identity", testCaptureResultPublication),
-            ("RESULT-SINGLE-02 cancelled and obsolete results never publish", testCancelledResultPublication)
+            ("RESULT-SINGLE-02 cancelled and obsolete results never publish", testCancelledResultPublication),
+            ("SECURITY-SINGLE-04 retained failed output and preview capacity are visible to shared owners", testRetainedResultBudget)
         ]
         for (name, body) in groups {
             try await body()
@@ -439,6 +440,40 @@ struct SingleCaptureCoordinatorTests {
         try expect(h.coordinator.hasRetainedImage && preparationCalls == 1 && h.capturer.calls == 1,
                    "Existing single image was discarded or collection caches touched during begin")
         h.coordinator.discard()
+    }
+
+    @MainActor
+    static func testRetainedResultBudget() async throws {
+        let h = try Harness()
+        h.clipboard.mode = .rejected
+        try h.beginAndSelect()
+        await h.coordinator.waitForWorker()
+        guard let data = h.clipboard.attemptedData.last else {
+            throw Failure(description: "Retained-result fixture did not reach its fake writer")
+        }
+        let source = h.capturer.asset.image.bytesPerRow * h.capturer.asset.image.height
+        try expect(h.coordinator.retainedImageBytes >= source + data.count
+            && h.coordinator.hasRetainedImage,
+            "Shared capacity omitted the unresolved single image or PNG")
+        h.coordinator.discard()
+        try expect(h.coordinator.retainedImageBytes == 0,
+            "Discarded single output remained in the shared ownership estimate")
+        let accepted = try Harness()
+        var observedHandoff = false
+        accepted.coordinator.onCaptureResult = { png, copied, _ in
+            observedHandoff = copied && accepted.coordinator.isWorking
+                && accepted.coordinator.retainedImageBytes >= source + png.count
+        }
+        try accepted.beginAndSelect()
+        await accepted.coordinator.waitForWorker()
+        try expect(observedHandoff && accepted.coordinator.retainedImageBytes == 0,
+            "Successful publication omitted a live worker's local image or retained it after return")
+        for invalid in [[Int.max, 1], [-1, 0]] {
+            var rejected = false
+            do { _ = try CaptureRetainedImageBudget.sum(invalid[0], invalid[1]) }
+            catch { rejected = true }
+            try expect(rejected, "Aggregate image capacity accepted overflow or a negative owner")
+        }
     }
 
     @MainActor

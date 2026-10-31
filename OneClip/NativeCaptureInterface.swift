@@ -14,12 +14,43 @@ private final class CaptureReturnOrigin {
 @MainActor
 final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDelegate, CollectionCaptureInterface {
     static let shared = NativeCaptureInterface()
+
+    /// Result ownership participates in the same synchronous invalidation route as capture.
+    /// Only production uses the shared result controller; test instances default to no services.
+    struct ResultServices {
+        let blocksCapture: @MainActor () -> Bool
+        let invalidate: @MainActor (CaptureEnvironmentEvent) -> Void
+        let dismissPreview: @MainActor () -> Void
+
+        static var live: ResultServices {
+            ResultServices(blocksCapture: {
+                CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving
+            }, invalidate: { _ in CaptureResultController.shared.environmentDidChange() },
+               dismissPreview: { CaptureResultController.shared.dismissPreview() })
+        }
+        static var isolated: ResultServices {
+            ResultServices(blocksCapture: { false }, invalidate: { _ in }, dismissPreview: {})
+        }
+    }
+    /// Annotation is a separate image owner; diagnostics never resolve its live singleton.
+    struct AnnotationServices {
+        let blocksCapture: @MainActor () -> Bool
+        let invalidate: @MainActor (CaptureEnvironmentEvent) -> Void
+        static var live: AnnotationServices {
+            AnnotationServices(blocksCapture: { CaptureAnnotationController.shared.blocksCapture },
+                invalidate: { _ in CaptureAnnotationController.shared.invalidate() })
+        }
+        static var isolated: AnnotationServices {
+            AnnotationServices(blocksCapture: { false }, invalidate: { _ in })
+        }
+    }
+
     weak var coordinator: SingleCaptureCoordinator?
     weak var collectionCoordinator: CollectionCaptureCoordinator?
     var collectionExpanded = false {
         didSet {
             if oldValue != collectionExpanded {
-                ProductHotKeyController.shared.discardQueuedPresses()
+                if usesLiveApplicationServices { ProductHotKeyController.shared.discardQueuedPresses() }
                 collectionCoordinator?.objectWillChange.send()
             }
         }
@@ -27,7 +58,7 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var collectionConfirmationPending = false {
         didSet {
             if oldValue != collectionConfirmationPending {
-                ProductHotKeyController.shared.discardQueuedPresses()
+                if usesLiveApplicationServices { ProductHotKeyController.shared.discardQueuedPresses() }
                 collectionCoordinator?.objectWillChange.send()
             }
         }
@@ -37,11 +68,11 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var settingsBlockCapture: (@MainActor () -> Bool)?
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
     var collectionCopyBlocked: Bool {
-        CaptureAnnotationController.shared.blocksCapture || CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
+        annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     var captureEntryBlocked: Bool {
-        CaptureAnnotationController.shared.blocksCapture || CaptureResultController.shared.hasPendingSave || CaptureResultController.shared.isSaving || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
+        annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?
@@ -66,30 +97,25 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     private let singleOrigin = CaptureReturnOrigin()
     private let collectionOrigin = CaptureReturnOrigin()
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
-    private var sessionMonitor: CaptureSessionMonitor!
-    private var consoleUserMonitor: CaptureConsoleUserMonitor!
-    var captureEnvironmentStatus: String {
-        if !consoleUserMonitor.isReady { return consoleUserMonitor.statusText }
-        return sessionMonitor.statusText
-    }
+    private var environmentRouter: CaptureEnvironmentRouter!
+    private let usesLiveApplicationServices: Bool
+    private let resultServices: ResultServices
+    private let annotationServices: AnnotationServices
+    let securityTrace: CaptureSecurityTrace
+    var captureEnvironmentStatus: String { environmentRouter.statusText }
     #if DEBUG
     var captureSessionDiagnostics: String {
-        sessionMonitor.diagnosticText + "\n" + consoleUserMonitor.diagnosticText
+        environmentRouter.diagnosticText
     }
     #endif
     func prepareCaptureEnvironment() -> Bool {
-        sessionMonitor.start() // Existing subscriptions never re-prime a pending change.
-        consoleUserMonitor.start()
-        return validateCaptureEnvironment()
+        environmentRouter.prepare()
     }
     func validateCaptureEnvironment() -> Bool {
-        let sessionReady = sessionMonitor.validate()
-        let consoleReady = consoleUserMonitor.validate()
-        return sessionReady && consoleReady
+        environmentRouter.validate()
     }
     func stopEnvironmentMonitoring() {
-        sessionMonitor.stop()
-        consoleUserMonitor.stop()
+        environmentRouter.stop()
     }
     private var discardHandlers: [@MainActor (Bool) -> Void] = []
     #if DEBUG
@@ -99,31 +125,15 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     #endif
 
     override init() {
+        usesLiveApplicationServices = true
+        resultServices = .live
+        annotationServices = .live
+        securityTrace = .disabled
         super.init()
-        sessionMonitor = CaptureSessionMonitor { [weak self] event in
-            self?.environmentDidChange(event == .consoleChanged
-                ? .consoleSessionChanged : .consoleSessionUnavailable)
-        }
-        consoleUserMonitor = CaptureConsoleUserMonitor { [weak self] event in
-            self?.environmentDidChange(event == .changed
-                ? .consoleUserChanged : .consoleUserUnavailable)
-        }
-        sessionMonitor.start()
-        consoleUserMonitor.start()
+        installEnvironment(sources: .live, sessionBackend: .live, consoleBackend: .live)
+        environmentRouter.start()
         rememberExternalApplication()
         let workspace = NSWorkspace.shared.notificationCenter
-        let environmentEvents: [(Notification.Name, CaptureEnvironmentEvent)] = [
-            (NSWorkspace.willSleepNotification, .systemSleep),
-            (NSWorkspace.screensDidSleepNotification, .displaySleep),
-            (NSWorkspace.sessionDidResignActiveNotification, .sessionResigned)
-        ]
-        for (name, event) in environmentEvents {
-            let token = workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                // queue .main supplies the executor. Invalidate before a queued worker can adopt a result.
-                MainActor.assumeIsolated { self?.environmentDidChange(event) }
-            }
-            observers.append((workspace, token))
-        }
         let activation = workspace.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
                                                object: nil, queue: .main) { [weak self] notification in
             let processID = (notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.processIdentifier
@@ -140,22 +150,55 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
             }
         }
         observers.append((workspace, activation))
-        let screenChange = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
-                                                                  object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.environmentDidChange(.displayChanged) }
-        }
-        observers.append((.default, screenChange))
+    }
+
+    /// Explicit test dependencies. This initializer never reads foreground application state,
+    /// starts global hotkey services or installs the application-activation observer.
+    init(environmentSources: CaptureEnvironmentRouter.NotificationSources,
+         sessionBackend: CaptureSessionMonitor.Backend,
+         consoleBackend: CaptureConsoleUserMonitor.Backend,
+         securityTrace: CaptureSecurityTrace = .disabled, startMonitoring: Bool = true,
+         resultServices: ResultServices = .isolated, annotationServices: AnnotationServices = .isolated) {
+        usesLiveApplicationServices = false
+        self.resultServices = resultServices
+        self.annotationServices = annotationServices
+        self.securityTrace = securityTrace
+        super.init()
+        installEnvironment(sources: environmentSources, sessionBackend: sessionBackend, consoleBackend: consoleBackend)
+        if startMonitoring { environmentRouter.start() }
+    }
+
+    private func installEnvironment(sources: CaptureEnvironmentRouter.NotificationSources,
+                                    sessionBackend: CaptureSessionMonitor.Backend,
+                                    consoleBackend: CaptureConsoleUserMonitor.Backend) {
+        environmentRouter = CaptureEnvironmentRouter(sources: sources, sessionBackend: sessionBackend,
+            consoleBackend: consoleBackend, securityTrace: securityTrace) { [weak self] event in
+                self?.invalidateEnvironmentConsumers(event)
+            }
+    }
+
+    func protectedDataWillBecomeUnavailable() {
+        environmentDidChange(.protectedDataUnavailable)
     }
 
     func environmentDidChange(_ event: CaptureEnvironmentEvent) {
-        CaptureAnnotationController.shared.invalidate()
-        CaptureResultController.shared.environmentDidChange()
+        environmentRouter.receive(event)
+    }
+
+    private func invalidateEnvironmentConsumers(_ event: CaptureEnvironmentEvent) {
+        // The router has already recorded the source event. Clear editor/result ownership
+        // before either capture owner can adopt a queued image. Delivery codes prove routing,
+        // not that a disabled/isolated consumer had an image or a real window.
+        securityTrace.record(.annotationInvalidationDelivered)
+        annotationServices.invalidate(event)
+        securityTrace.record(.resultInvalidationDelivered)
+        resultServices.invalidate(event)
         coordinator?.environmentDidChange(event)
         collectionCoordinator?.environmentDidChange(event)
     }
 
     func showCollection(activate: Bool) {
-        CaptureResultController.shared.dismissPreview()
+        resultServices.dismissPreview()
         guard let collectionCoordinator else { return }
         collectionCoordinator.objectWillChange.send()
         CollectionPanelController.shared.show(coordinator: collectionCoordinator, interface: self, activate: activate)
@@ -188,10 +231,12 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func rememberExternalApplication() {
+        guard usesLiveApplicationServices else { return }
         rememberOrigin(singleOrigin)
     }
 
     func rememberCollectionOrigin() {
+        guard usesLiveApplicationServices else { return }
         rememberOrigin(collectionOrigin)
     }
 
@@ -251,7 +296,7 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
 
     private func prepareForSelection(owner: CaptureUIOwner) -> Bool {
         guard !captureEntryBlocked else { return false }
-        CaptureResultController.shared.dismissPreview()
+        resultServices.dismissPreview()
         #if DEBUG
         guard !M0LabController.shared.busy else { return false }
         M0LabController.shared.invalidate(hide: true)

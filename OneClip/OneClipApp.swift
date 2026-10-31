@@ -3,6 +3,29 @@ import Carbon
 import Combine
 import SwiftUI
 
+enum CaptureRetainedImageBudget {
+    static func images(_ images: [CGImage]) throws -> Int {
+        var seen: Set<ObjectIdentifier> = []
+        var total = 0
+        for image in images where seen.insert(ObjectIdentifier(image)).inserted {
+            let bytes = image.bytesPerRow.multipliedReportingOverflow(by: image.height)
+            guard !bytes.overflow else { throw M0ImageError.arithmeticOverflow }
+            total = try sum(total, bytes.partialValue)
+        }
+        return total
+    }
+    static func sum(_ values: Int...) throws -> Int {
+        var total = 0
+        for value in values {
+            guard value >= 0 else { throw M0ImageError.invalidMetrics }
+            let next = total.addingReportingOverflow(value)
+            guard !next.overflow else { throw M0ImageError.arithmeticOverflow }
+            total = next.partialValue
+        }
+        return total
+    }
+}
+
 @main
 struct OneClipApp: App {
     @NSApplicationDelegateAdaptor(OneClipAppDelegate.self) private var delegate
@@ -177,7 +200,19 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
         }
         collection.recoverExternalOperation = { capture.showCurrentProblem() }
         capture.prepareExternalCapture = { collection.prepareForSingleCapture() }
-        capture.externalRetainedBytes = { collection.retainedImageBytes }
+        let result = CaptureResultController.shared
+        let annotation = CaptureAnnotationController.shared
+        capture.externalRetainedBytes = {
+            try CaptureRetainedImageBudget.sum(collection.retainedImageBytes, result.retainedImageBytes,
+                                                annotation.retainedImageBytes)
+        }
+        collection.externalRetainedBytes = {
+            try CaptureRetainedImageBudget.sum(result.retainedImageBytes, annotation.retainedImageBytes)
+        }
+        result.externalRetainedBytes = {
+            try CaptureRetainedImageBudget.sum(capture.retainedImageBytes, collection.retainedImageBytes,
+                                                annotation.retainedImageBytes)
+        }
         capture.objectWillChange.sink { [weak collection] _ in
             MainActor.assumeIsolated { collection?.objectWillChange.send() }
         }.store(in: &stateSubscriptions)
@@ -187,7 +222,6 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
                 collection?.objectWillChange.send()
             }
         }.store(in: &stateSubscriptions)
-        let annotation = CaptureAnnotationController.shared
         annotation.canOpen = {
             !capture.isWorking && !capture.hasRetainedImage && !collection.isWorking && collection.canStartSingle
                 && !CaptureWorkerSlot.shared.isOccupied
@@ -195,7 +229,10 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
                 && ![.selecting, .permission, .onboarding].contains(collection.phase)
                 && !interface.hasDiscardConfirmation && !interface.collectionConfirmationPending
         }
-        annotation.externalRetainedBytes = { collection.annotationRetainedImageBytes }
+        annotation.externalRetainedBytes = {
+            try CaptureRetainedImageBudget.sum(capture.retainedImageBytes, collection.retainedImageBytes,
+                                                result.retainedImageBytes)
+        }
         annotation.objectWillChange.sink { [weak capture, weak collection] _ in
             MainActor.assumeIsolated {
                 capture?.objectWillChange.send()
@@ -228,7 +265,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationProtectedDataWillBecomeUnavailable(_ notification: Notification) {
-        NativeCaptureInterface.shared.environmentDidChange(.protectedDataUnavailable)
+        NativeCaptureInterface.shared.protectedDataWillBecomeUnavailable()
         #if DEBUG
         M0LabController.shared.invalidate(hide: true)
         #endif

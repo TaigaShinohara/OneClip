@@ -37,12 +37,15 @@ enum M0ClipboardProbe {
     static func writePNG(
         _ data: Data,
         to pasteboard: NSPasteboard,
-        expectedChangeCount: Int
+        expectedChangeCount: Int,
+        securityTrace: CaptureSecurityTrace = .disabled,
+        traceMode: CaptureSecurityTrace.Mode = .none
     ) -> Outcome {
         writePNG(
             data,
             to: PasteboardDestination(pasteboard: pasteboard),
             expectedChangeCount: expectedChangeCount,
+            securityTrace: securityTrace, traceMode: traceMode,
             itemFactory: makePNGItem
         )
     }
@@ -53,6 +56,8 @@ enum M0ClipboardProbe {
         _ data: Data,
         to destination: any M0ClipboardProbeDestination,
         expectedChangeCount: Int,
+        securityTrace: CaptureSecurityTrace = .disabled,
+        traceMode: CaptureSecurityTrace.Mode = .none,
         itemFactory: @MainActor (Data) -> NSPasteboardItem?
     ) -> Outcome {
         guard !data.isEmpty else {
@@ -85,6 +90,7 @@ enum M0ClipboardProbe {
 
         // This clears the destination. No restoration or further user action is attempted here.
         let preparedCount = destination.prepareForNewContents(with: .currentHostOnly)
+        securityTrace.record(.clipboardPrepared, mode: traceMode, phase: .writing)
         let beforeWrite = destination.changeCount
         guard beforeWrite == preparedCount else {
             return Outcome(
@@ -97,6 +103,7 @@ enum M0ClipboardProbe {
 
         // Keep preparation and writing in one synchronous call. changeCount is a best-effort
         // conflict check, not an atomic compare-and-swap across different applications.
+        securityTrace.record(.clipboardWrite, mode: traceMode, phase: .writing)
         let accepted = destination.write(item)
         let observedCount = destination.changeCount
         return Outcome(

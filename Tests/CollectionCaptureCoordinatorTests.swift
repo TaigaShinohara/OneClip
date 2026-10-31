@@ -52,6 +52,9 @@ struct CollectionCaptureCoordinatorTests {
             ("SECURITY-COLLECTION-01 every environment event clears copied and candidate owners", testEnvironmentRetainedMatrix),
             ("SECURITY-COLLECTION-02 every event rejects late success and failure at worker boundaries", testEnvironmentLateMatrix),
             ("RESULT-COLLECTION-01 confirmed PNGs publish with exact clipboard results and content retry identity", testCaptureResultPublication),
+            ("SECURITY-COLLECTION-03 external result images share acquisition and composition capacity", testExternalResultBudget),
+            ("SECURITY-COLLECTION-04 result handoff counts live worker and retained completed images", testResultHandoffBudget),
+            ("SECURITY-COLLECTION-05 acquisition rechecks newly occupied external capacity", testExternalAdoptionBudget),
             ("ANNOTATION-COLLECTION-01 retained annotation budget includes completed PNGs and comparison candidates", testAnnotationRetention)
         ]
         for (name, body) in groups {
@@ -90,6 +93,7 @@ struct CollectionCaptureCoordinatorTests {
         var selectionCalls = 0
         var hideSelectionCalls = 0
         var hideCollectionCalls = 0
+        var collectionVisible = false
         var permissionCalls = 0
         var dismissCalls = 0
         var rememberCalls = 0
@@ -113,8 +117,8 @@ struct CollectionCaptureCoordinatorTests {
             self.cancelled = cancelled
         }
         func hideSelection() -> Bool { hideSelectionCalls += 1; return hideSelectionResult }
-        func showCollection(activate: Bool) { collectionActivations.append(activate) }
-        func hideCollection() { hideCollectionCalls += 1 }
+        func showCollection(activate: Bool) { collectionVisible = true; collectionActivations.append(activate) }
+        func hideCollection() { collectionVisible = false; hideCollectionCalls += 1 }
         func showCollectionGuide(started: @escaping @MainActor () -> Void,
                                  cancelled: @escaping @MainActor () -> Void) {
             guideCalls += 1; guideStarted = started; guideCancelled = cancelled
@@ -367,7 +371,8 @@ struct CollectionCaptureCoordinatorTests {
         guard let candidate = h.coordinator.pendingReplacement?.candidate else { throw Failure(description: "Missing annotation candidate fixture") }
         try expect(!h.coordinator.canStartSingle,
                    "An unresolved candidate allowed an annotation entry")
-        try expect(h.coordinator.annotationRetainedImageBytes >= h.coordinator.retainedImageBytes + candidate.image.bytesPerRow * candidate.image.height,
+        try expect(h.coordinator.annotationRetainedImageBytes == h.coordinator.retainedImageBytes
+                   && h.coordinator.annotationRetainedImageBytes >= sourcesOnly + candidate.image.bytesPerRow * candidate.image.height,
                    "Comparison candidate escaped annotation retention")
     }
 
@@ -386,6 +391,93 @@ struct CollectionCaptureCoordinatorTests {
         try expect(h.composer.calls == 0 && h.clipboard.calls == 0, "Empty session copied")
         h.coordinator.beginOrAdd(); h.interface.cancelled?()
         try expect(h.coordinator.isActive && h.coordinator.phase == .ready, "Esc destroyed a previously edited empty session")
+    }
+
+    @MainActor
+    static func testExternalResultBudget() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add()
+        let originalID = h.coordinator.items[0].id
+        for invalid in [-1, Int.max] {
+            h.coordinator.externalRetainedBytes = { invalid }
+            h.coordinator.beginOrAdd()
+            try h.select()
+            await h.coordinator.waitForWorker()
+            try expect(h.capturer.calls == 1 && h.coordinator.assets.count == 1
+                && h.coordinator.items[0].id == originalID && !h.slot.isOccupied,
+                "External result capacity loss captured or discarded an existing source")
+            let calls = h.composer.calls
+            h.coordinator.copy()
+            await h.coordinator.waitForWorker()
+            try expect(h.composer.calls == calls && h.clipboard.calls == 0 && !h.slot.isOccupied,
+                "External result capacity loss reached composition or retained a permit")
+        }
+        h.coordinator.externalRetainedBytes = { 1_234 }
+        try await h.add(index: 2)
+        try expect(h.capturer.requests.last?.budget.retainingExtraBytes == 1_234,
+            "Acquisition omitted the external image owner's bytes")
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(h.clipboard.accepted == 1 && h.coordinator.assets.count == 2 && !h.slot.isOccupied,
+            "Explicit operation did not recover after external image capacity was restored")
+    }
+
+    @MainActor
+    static func testResultHandoffBudget() async throws {
+        for mode in [FakeClipboard.Mode.accepted, .rejectedAfterPrepare] {
+            let h = try Harness(); defer { h.cleanUp() }
+            try await h.add(); try await h.add(index: 2)
+            guard let plan = h.coordinator.plan else { throw Failure(description: "Missing handoff fixture plan") }
+            let raw = h.coordinator.assets.reduce(0) { $0 + $1.image.bytesPerRow * $1.image.height }
+            h.clipboard.mode = mode
+            var observed = false
+            var publishedBytes = 0
+            h.coordinator.onCaptureResult = { data, _, _ in
+                publishedBytes = data.count
+                observed = h.coordinator.isWorking && h.slot.isOccupied
+                    && h.coordinator.retainedImageBytes >= raw + plan.outputBytes + data.count
+            }
+            h.coordinator.copy(); await h.coordinator.waitForWorker()
+            try expect(observed && !h.slot.isOccupied, "Publication lost live worker ownership before return")
+            if mode != .accepted {
+                try expect(h.coordinator.completed != nil
+                    && h.coordinator.retainedImageBytes >= raw + plan.outputBytes + publishedBytes,
+                    "Failed copy's completed bitmap and PNG disappeared from the shared estimate")
+            } else {
+                try expect(h.coordinator.completed == nil && h.coordinator.retainedImageBytes < raw + plan.outputBytes + publishedBytes,
+                    "Successful copy kept the returned worker's output reservation")
+            }
+        }
+        let candidate = try Harness(); defer { candidate.cleanUp() }
+        try await candidate.add()
+        let previous = candidate.coordinator.retainedImageBytes
+        candidate.capturer.nextAsset = try M0ImageFixture.make(index: 2, width: 32, height: 32)
+        candidate.coordinator.replace(at: 0)
+        try candidate.select(width: 32, height: 32)
+        await candidate.coordinator.waitForWorker()
+        try expect(candidate.coordinator.pendingReplacement != nil
+            && candidate.coordinator.retainedImageBytes >= previous + 32 * 32 * 4,
+            "Unadopted candidate was omitted from retained image ownership")
+    }
+
+    @MainActor
+    static func testExternalAdoptionBudget() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add()
+        final class ExternalBudget { var bytes = 0 }
+        let external = ExternalBudget()
+        h.coordinator.externalRetainedBytes = { external.bytes }
+        h.capturer.pauseNext = true
+        h.coordinator.beginOrAdd(); try h.select()
+        try await waitUntil { h.capturer.isWaiting }
+        external.bytes = Int.max
+        try h.capturer.release()
+        await h.coordinator.waitForWorker()
+        try expect(h.coordinator.assets.count == 1 && h.clipboard.calls == 0 && !h.slot.isOccupied,
+            "Late acquisition used a stale external capacity snapshot")
+        external.bytes = 0
+        try await h.add(index: 2)
+        try expect(h.coordinator.assets.count == 2, "Explicit acquisition failed after capacity was restored")
     }
 
     @MainActor
@@ -1344,6 +1436,7 @@ struct CollectionCaptureCoordinatorTests {
         for event in CaptureEnvironmentEvent.allCases {
             for copyState in 0..<3 {
                 for withCandidate in [false, true] {
+                  for visible in [false, true] {
                     let h = try Harness(); defer { h.cleanUp() }
                     try await h.add(); try await h.add(index: 2, width: 20)
                     if copyState > 0 { h.coordinator.copy(); await h.coordinator.waitForWorker() }
@@ -1358,6 +1451,8 @@ struct CollectionCaptureCoordinatorTests {
                         try expect(h.coordinator.completed != nil, "Cached output precondition missing")
                     }
                     let candidateID = h.coordinator.pendingReplacement?.id
+                    if visible { h.coordinator.showPanel() } else { h.interface.hideCollection() }
+                    try expect(h.interface.collectionVisible == visible, "Visibility precondition missing")
                     let staleSelection = h.interface.selected
                     let calls = h.capturer.calls, writes = h.clipboard.calls
                     let feedback = h.interface.feedback.count
@@ -1366,6 +1461,7 @@ struct CollectionCaptureCoordinatorTests {
                                && h.coordinator.completed == nil && h.coordinator.pendingReplacement == nil
                                && h.coordinator.copiedContentRevision == nil && !h.slot.isOccupied,
                                "Environment event retained a copied draft, candidate, cache or session")
+                    try expect(!h.interface.collectionVisible, "Invalidation left image presentation visible")
                     staleSelection?(try h.selection())
                     if let candidateID { h.coordinator.acceptReplacement(id: candidateID) }
                     h.coordinator.showPanel(); h.coordinator.copy(); h.coordinator.beginFromShortcut()
@@ -1377,10 +1473,11 @@ struct CollectionCaptureCoordinatorTests {
                                "A new explicit session could not recover after invalidation")
                     h.coordinator.cancelOperation()
                     cases += 1
+                  }
                 }
             }
         }
-        try expect(cases == CaptureEnvironmentEvent.allCases.count * 6,
+        try expect(cases == CaptureEnvironmentEvent.allCases.count * 12,
                    "The retained-state matrix did not cover every event and state")
         print("PASS SECURITY retained-state matrix cases=\(cases) injectedEvents=1")
     }
