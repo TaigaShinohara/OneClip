@@ -51,7 +51,8 @@ struct CollectionCaptureCoordinatorTests {
             ("UX-COLLECTION-08 single entry fences retained collection without blocking first permission guidance", testSingleEntryRetainedFence),
             ("SECURITY-COLLECTION-01 every environment event clears copied and candidate owners", testEnvironmentRetainedMatrix),
             ("SECURITY-COLLECTION-02 every event rejects late success and failure at worker boundaries", testEnvironmentLateMatrix),
-            ("RESULT-COLLECTION-01 confirmed PNGs publish with exact clipboard results and content retry identity", testCaptureResultPublication)
+            ("RESULT-COLLECTION-01 confirmed PNGs publish with exact clipboard results and content retry identity", testCaptureResultPublication),
+            ("ANNOTATION-COLLECTION-01 retained annotation budget includes completed PNGs and comparison candidates", testAnnotationRetention)
         ]
         for (name, body) in groups {
             try await body()
@@ -339,6 +340,35 @@ struct CollectionCaptureCoordinatorTests {
             }
         }
         print("M4_COORD_RESULT warmupCompleted=\(warmupCompleted) measuredCompleted=\(measuredCompleted) measuredRepresentativePasses=\(measuredRepresentativePasses) failures=0 finiteLogicalObservationOnly=1")
+    }
+
+    @MainActor
+    static func testAnnotationRetention() async throws {
+        let h = try Harness(); defer { h.cleanUp() }
+        try await h.add(index: 1, width: 80)
+        try await h.add(index: 2, width: 90)
+        let sourcesOnly = h.coordinator.retainedImageBytes
+        h.coordinator.preparePreview()
+        await h.coordinator.waitForWorker()
+        guard let completed = h.coordinator.completed else { throw Failure(description: "Missing completed annotation budget fixture") }
+        let outputBytes = completed.image.bytesPerRow * completed.image.height
+        try expect(h.coordinator.annotationRetainedImageBytes >= sourcesOnly + outputBytes + completed.pngData.count,
+                   "Completed preview bitmap or PNG escaped annotation retention")
+        h.clipboard.mode = .rejectedBeforePrepare
+        h.coordinator.copy()
+        await h.coordinator.waitForWorker()
+        try expect(h.coordinator.completed != nil && h.coordinator.annotationRetainedImageBytes >= sourcesOnly + outputBytes + completed.pngData.count,
+                   "Clipboard failure hid a retained completed output from annotation budgeting")
+        let id = h.coordinator.items[0].id
+        h.capturer.nextAsset = try M0ImageFixture.make(index: 3, width: 70, height: 20)
+        h.coordinator.replace(assetID: id)
+        try h.select(width: 70, height: 20)
+        await h.coordinator.waitForWorker()
+        guard let candidate = h.coordinator.pendingReplacement?.candidate else { throw Failure(description: "Missing annotation candidate fixture") }
+        try expect(!h.coordinator.canStartSingle,
+                   "An unresolved candidate allowed an annotation entry")
+        try expect(h.coordinator.annotationRetainedImageBytes >= h.coordinator.retainedImageBytes + candidate.image.bytesPerRow * candidate.image.height,
+                   "Comparison candidate escaped annotation retention")
     }
 
     @MainActor
