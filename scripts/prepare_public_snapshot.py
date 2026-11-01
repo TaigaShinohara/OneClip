@@ -50,6 +50,18 @@ FORBIDDEN_COMPONENTS = {".git", ".local", "xcuserdata", "DerivedData", "build", 
 FORBIDDEN_SUFFIXES = {".p12", ".p8", ".pem", ".key", ".mobileprovision", ".provisionprofile", ".bundle"}
 
 
+# This address is an intentionally public project contact, not a domain-wide
+# exemption. Preserve exact spelling/case; similar aliases remain unapproved.
+APPROVED_PROJECT_AUTHOR_EMAIL = "deeple+oneclipstaff@inkboxmail.com"
+GITHUB_NOREPLY_EMAIL = re.compile(
+    r"[A-Za-z0-9+_.-]+@users\.noreply\.github\.com|noreply@github\.com"
+)
+
+
+def is_approved_public_author_email(email):
+    return email == APPROVED_PROJECT_AUTHOR_EMAIL or GITHUB_NOREPLY_EMAIL.fullmatch(email) is not None
+
+
 def git_environment():
     # Keep credentials and machine-specific Git config out of this local export.
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
@@ -132,8 +144,8 @@ def prepare(source, output):
 
     author_name = git(source, "log", "-1", "--format=%an", revision).decode().strip()
     author_email = git(source, "log", "-1", "--format=%ae", revision).decode().strip()
-    if not author_email.endswith("@users.noreply.github.com"):
-        raise PreparationError("The source commit author must use a GitHub noreply email for the public snapshot.")
+    if not is_approved_public_author_email(author_email):
+        raise PreparationError("The source commit author must use an approved public email for the public snapshot.")
 
     output.mkdir(parents=True)
     for path, mode, content in files:

@@ -936,7 +936,7 @@ private struct CaptureGuideInstructions: View {
             Divider()
             guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "完成画像を確認してコピー" : "矢印でも選べます",
                       message: collection
-                        ? "収集中はクリップボードを変更しません。撮影順に並ぶ完成画像を確認し、最後に「コピー」を押してください。"
+                        ? "収集中はクリップボードを変更しません。撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。"
                         : "矢印で範囲を作成・移動し、Shift + 矢印で大きさを変えます。Enterで確定、Escapeで取り消せます。")
         }
         .oneClipCard()
@@ -950,6 +950,8 @@ private struct CaptureGuideInstructions: View {
                 Text("撮影に必要な場合だけ画面収録の許可を案内します。")
                     .foregroundStyle(.secondary)
             }
+            Text("完成画像はこのMacに自動保存し、終了やロック後も残ります。保存期限はありません。")
+                .foregroundStyle(.secondary)
         }
         .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
     }
@@ -965,6 +967,31 @@ private struct CaptureGuideInstructions: View {
                     .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+/// Shared, optional detail for settings and the first-use/reviewable guide.
+/// Expanding this explanation does not change capture, save, or acknowledgement policy.
+struct CaptureDataNotice: View {
+    var isActionDisabled = false
+    var contentSizeChanged: () -> Void = {}
+    @State private var showsDetails = false
+
+    var body: some View {
+        DisclosureGroup("保存とデータの扱い", isExpanded: $showsDetails) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("撮影原本・注釈入りPNG・標準「プレビュー」用の編集コピーは、終了・ロック・素材の破棄後も残ります。自動削除は行いません。")
+                Text("保存先はこのアプリ専用のフォルダです。不要な画像は保存フォルダで管理してください。")
+                Button("保存フォルダを開く") { CaptureResultController.shared.openFolder() }
+                    .disabled(isActionDisabled)
+                Text("コメントや囲みは画像を説明するための機能です。写った機密情報を隠すことはできず、原本も残ります。")
+                Text("画像やコメントを外部送信せず、選択範囲や収集セッションも保存しません。コピー後の画像や、標準「プレビュー」・貼り付け先での扱いは、各アプリとOSに従います。")
+            }
+            .foregroundStyle(.secondary).lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
+        }
+        .font(.callout)
+        .onChange(of: showsDetails) { _, _ in contentSizeChanged() }
     }
 }
 
@@ -1019,6 +1046,7 @@ private struct CaptureUsageGuideView: View {
             }
             .pickerStyle(.segmented)
             CaptureGuideInstructions(collection: collection)
+            CaptureDataNotice(contentSizeChanged: contentSizeChanged)
             Text("この案内は、メニューや設定の「使い方…」からいつでも見返せます。")
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

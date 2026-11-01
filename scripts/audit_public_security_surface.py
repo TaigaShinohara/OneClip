@@ -153,7 +153,7 @@ def audit_repository(repo, tips, approved_names=None):
             name, email = (part.decode("utf-8", errors="replace") for part in match.groups())
             if name not in names:
                 finding("unapproved_public_author_name", commit, role)
-            if not re.fullmatch(r"[A-Za-z0-9+_.-]+@users\.noreply\.github\.com|noreply@github\.com", email):
+            if not publication.is_approved_public_author_email(email):
                 finding("non_noreply_author_email", commit, role)
             for category, line in content_categories(records[0]):
                 finding(category, commit, role, line)
