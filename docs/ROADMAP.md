@@ -407,6 +407,7 @@ D16は、公開`2eb97e0`で追加された注釈機能を保ったまま、読�
 R09／T05・T09／D05・D16の資源調査では、試験用Coreコピーの内部renderに対するCGImage・providerの生存／解放観測と、backing・allocator・プロセスメモリの判定を分ける。観測前のnilを解放証拠にせず、限定pilotの成立を製品全経路や既存FAILの合格へ継承しない。[限定観測の条件](SECURITY-ACCEPTANCE.md#内部renderオブジェクトの限定観測)へ対応付ける。
 現在、providerのweak観測pilotの実行入口は停止している。既存資源Probeの出力解放はschema2の強参照下の同一性読戻しを必要とし、旧schema1の代入flagだけを実観測へ昇格しない。これもCF互換性・backing・資源全体の受入とは分ける。
 数値不変の証拠移行は画像なし3対照まで成立し、同期合成の返却CGImage参照12件を確認した。同期baselineのRSS／footprint増加が旧Eを超えたため4件目で停止し、非同期と移行policyは未成立。[有限観測の結果](M4-VERIFICATION.md#security-resource-migration-20261101)を参照する。
+別系列の64×64 caller-owned buffer診断では、1 fresh processのprovider／画像／PNGの3経路で、strong保持中のcallback0と終了後callback1・追跡buffer0を確認した。これは新しい寿命計測器の成立だけであり、現rendererのbacking・既存増加原因・資源受入は未解決のまま。[所有bufferの限定観測](M4-VERIFICATION.md#security-owned-backing-20261101)へ対応付ける。
 
 初期値や仕様を変更する場合は、関連する要件・検証条件も同じ変更で更新します。
 

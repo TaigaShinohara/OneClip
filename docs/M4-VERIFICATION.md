@@ -709,3 +709,41 @@ macOS27.2／arm64、物理RAM16GiBで実施しました。停止済みprovider w
 元policyと製品入力32件、公証済み候補は不変です。旧FAIL・未実証は保持し、今回の12観測を旧ログへ遡って適用しません。
 同期baselineの資源超過、未実施async、backing・増加原因、cold UI・実SCK1px等が残るため、全体受入は未完了です。
 表示延期、本人開始のOS／一般clipboard、最低OS／Intel等の必須環境、M4総合／Collection VoiceOverの保留を維持します。
+<a id="security-owned-backing-20261101"></a>
+## 明示所有bufferの寿命計測器の成立（2026-11-01）
+
+対象はR09／T05・T09／D05・D16の資源調査です。既存の資源移行系列とprovider weak pilotは終了状態を維持し、
+新しい`OwnedBackingLifetimeProbe`と`run_owned_backing_trial.py`を別の診断として追加しました。
+製品の`CGContext(data:nil) → makeImage()`とは異なり、64×64のcaller-owned RGBA bufferを使います。
+contextのrelease callbackを実観測してから、同じbufferを明示providerとCGImageへ渡します。
+CF weak・bitmap snapshotは使わず、callback leaseの一度だけの解放と、最大5tokenの有効期間を管理します。
+
+新しいbuild入口は診断binaryだけをbuildし、実行しません。8sourceとbinaryをhashで固定し、compiler版・SDKパス・flagsを
+manifestへ記録しました。Swift6 strict concurrency／`-O`／whole-module-optimizationでbuildが成功しました。
+新20 methodsを含むPython全260件が成功し、nativeの所有設計、親の固定protocol・上限・停止・保存条件は独立レビュー済みです。
+system Python3.9でのimportとshell構文も確認しました。製品アプリの再build・署名・公証は行っていません。
+
+### 事前条件と実測
+
+1 fresh child・固定3 arms・再試行なしを事前に固定しました。各arm2秒／native全体8秒、親のchild上限10秒／全体14秒、
+cleanup2＋2秒です。最初の未成立で後続armを開始しません。予約はbinaryやoutputを替えても同じ予約先で再走を拒否します。
+実行前後の8source・manifest・binaryが一致し、macOS27.2／arm64で1 childが約0.296秒、exit0・回収確認済み・stderr0でした。
+
+| 経路 | strong保持中のprovider callback／live bytes | 終了後のprovider callback／live bytes | 追加観測 |
+| --- | --- | --- | --- |
+| `provider_hold` | 0／16,384 | 1／0 | 描画contextなし |
+| `image_hold` | 0／16,384 | 1／0 | provider作成前のcontext callback1 |
+| `png_encode` | 0／16,384 | 1／0 | context callback1、メモリ内PNG379 bytes |
+
+全3 armsが`OBSERVED`、各bufferの確保1／解放1／終了後live0を確認しました。
+結果は`ESTABLISHED_DIAGNOSTIC_ONLY`で、`resourceAcceptance=false`、`productBackingRelease=not_observed`、
+`physicalErasure=not_claimed`です。画像file・実画面・GUI・clipboard・TCCの操作は行っていません。
+親は固定17fieldのJSON recordsだけを許可し、raw出力・元エラー・未知出力のhashは保存していません。
+
+### 残る境界
+
+この成功は、明示所有bufferの新しい計測器が当該Macの小画像で成立したことだけを示します。
+現rendererのbacking解放、前節のRSS／footprint増加の原因、ImageIO cache／allocatorの保持、物理消去、
+製品の取消・worker回復、非同期・30cycleの資源受入は確認していません。旧policyの数値と既存FAILは変更していません。
+次段階では、計測器の正対照と現rendererの違いを保持したまま、局所比較の方法・有限予算・停止条件を別途固定します。
+同じ小画像系列の再走や基準緩和で資源未合格を埋め合わせません。最低OS／Intel等と表示・実OS・全面受入の未実証を維持します。
