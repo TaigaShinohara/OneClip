@@ -559,3 +559,50 @@ C source SHA-256は`f2d30b6086879abe9f97659b870707107f08991397e6091cc1e3d1953436
 冷間UIの既存861ms／254msはCollectionPanelのhostingを含む記録で、ResultView固有の原因とは特定できません。
 通常アプリとCLI初回hostingの費用は未分離です。今回、表示やmaterialを推測で変更せず、既存のcold UI FAILを保持しました。
 実表示・実SCK・一般クリップボード・OS遷移は未実施で、全体受入とM4総合・Collection VoiceOverの状態は変わりません。
+
+<a id="security-render-observation-20261101"></a>
+## 内部renderの試験用観測と初回未成立（2026-11-01）
+
+対象はR09／T05・T09／D05・D16の資源証拠です。製品入力32件は、公証済み統合候補の
+`a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08`とすべて一致しています。
+製品ソース・通常アプリの入口・署名対象は変更していません。
+
+### 試験用コピーと有限の実行器
+
+元Coreのrender後・encode前の一意な境界へ、観測の1行だけを加える準備scriptを追加しました。
+元のSHA-256は`adfdc47062e38dd44491dbabcd876b9bbd6f13af56f950d7fe831d6ea84a9294`、
+派生コピーは`689bbf0d100ffd27ef0d58c21456f6744f9d0389efa1f1057a645a1b8e322d11`です。
+挿入行を除くと元ソースへ完全一致し、既存の`CGContext(data: nil)`を維持します。
+CGImage・providerを型付きweak参照で観測するhelperは試験専用です。providerの画素を読み出すAPIは使いません。
+
+1 fresh process、架空64×64の2枚、正対照／通常成功／encode前取消／encode後取消の最大4条件を固定しました。
+worker協調期限2秒、親の実行待ち15秒と別枠の回収2＋2秒、stdout32KiB／stderr4KiBの上限を設定します。
+最初の未成立で後続を止め、同じbuildの二度目の起動を拒否します。実撮影・GUI・pasteboard・画像保存はありません。
+
+receiverは固定protocol・数値だけを再構成し、未知の出力や元error文は保存しません。
+object receiptの保存と任意の資源集計を分離し、既取得の観測が後段の欠測で失われることを防ぎます。
+時計の欠測はnullのまま保持し、取消後PNG・観測前のnil・入力改変・回収不明を成立へ変換しません。
+準備・receiver・runnerの52件を含むPython全191件、shell構文検査が成功しました。
+独立レビューで見つかったFIFOのopen待ち、時計欠測の0化、固定reasonの消失、危険な親directoryの受入を修正済みです。
+
+### ビルドと初回実行
+
+最初のbuild準備はプロセス確認の環境制限でcompile前に停止しました。
+次のbuildは標準ライブラリを読み込めず失敗しました。既存の成功手順と同じ`xcrun swiftc`へ修正し、
+他build・メモリ・diskを再確認した後、SDK27.2、Swift6・strict concurrency・`-O`・WMOでbuildが成功しました。
+これらの途中失敗と、実試験をまだ起動していなかったことも内部証拠に保持しています。
+
+実行物SHA-256は`c283f33138290207f5adb34552ee1cf4a1dd1cfeee0a3c5097e6a67034d5784c`、
+build manifestは`c75868279bfd348e2bf3bece4b588563404a5a3a070f96d5c7ea3f1fee008f84`です。
+この対応を実行前後に検査し、起動は1回だけ行いました。
+
+子は約0.4405秒でsignal6により異常終了しました。親は終了・回収を確認し、stdout396 bytesと破棄したstderr177 bytesの件数だけを記録しました。
+完結したprotocolは得られず、固定reasonは`output_record_count_invalid`、判定は`NOT_ESTABLISHED`です。
+未知の元出力・stderrは保存せず、異常終了の原因、内部到達点、どのCF参照操作が関係したかは特定していません。
+4条件の成立も、内部renderのCGImage・provider解放も確認できていません。再試行・後続への拡大は行っていません。
+
+このツールは既知の未成立を明示したopt-in診断であり、通常の検証合格や製品機能へ組み込みません。
+`backingRelease=not_observed`、資源集計`NOT_EXERCISED`、`resourceAcceptance=false`を保持します。
+旧ログの未観測、未説明のRSS／footprint増加、cold UI超過、実SCKの1px不一致は未解決のままです。
+資源系列の再開には、異常終了やbackingの所有について新たな区別可能な根拠と有限予算が必要です。
+表示試験の延期、本人開始のOS／一般clipboard、最低OS／Intel等の必須残件、M4総合とCollection VoiceOverの保留を維持します。
