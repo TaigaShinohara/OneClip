@@ -88,6 +88,43 @@ warmup/measured別のheartbeatは切分け用です。cold warmupを含むaggreg
 子processのtimeout・中断・wait失敗では、自分が起動したhandleだけを有限時間で終了・回収しようとします。
 handle未取得や回収確認不能は成功にせず、以後の試行を止めます。
 
+### 内部renderオブジェクトの限定観測
+
+以下はopt-inの実験用診断です。当該Macの初回実行は子の異常終了で`NOT_ESTABLISHED`となり、
+実オブジェクト寿命の証拠は得られていません。[実行記録](M4-VERIFICATION.md#security-render-observation-20261101)を参照してください。
+
+`scripts/prepare_resource_observation.py`は、元のCoreのrender後・encode前という一意の境界に観測を1行挿入した試験用コピーを、
+新しいOS一時directoryへ作ります。元ソースのSHA-256、正確な差分、派生コピーのSHA-256を記録し、製品ソースを変更しません。
+境界の不一致・重複、FIFO・symlink・既存出力を拒否します。通常rendererの`CGContext(data: nil)`は維持します。
+
+`scripts/build_render_ownership_tools.sh`はこのコピーと`Tests/M4RenderOwnershipPilot.swift`をbuildするだけです。
+`scripts/run_render_ownership_pilot.py`はmanifestと元入力・派生入力・実行物の対応を検査してから、1 fresh processを実行待ち期限15秒で1回起動します。
+終了・回収には別途terminate後2秒、kill後2秒の有限期限を設けます。期限超過・回収不明は成立にしません。
+素材は架空64×64の2枚だけで、正対照・通常成功・encode前の実Task取消・encode後の実Task取消を各1回に固定します。
+最初の未成立で後続を停止し、親も自分の子だけを有限時間で回収します。実撮影・GUI・pasteboard・画像保存は行いません。
+
+正対照は、実renderのCGImageとそのproviderを一度生存・同一性確認した後、明示strong保持とproviderだけの保持を確認します。
+providerだけを明示保持する段階では、CGImageの生存は0／1の両方を許容し、providerからの間接保持を違反にしません。
+すべてのTask・返却結果・明示strong保持のscopeを抜けてから、型付きweak参照が両方nilになったことを調べます。
+取消では、停止中の両オブジェクトの生存、実Task取消、元wrapperによる実workerのawait、PNGの不返却も必要です。
+未観測は-1とし、最初からnilだった値を解放済みへ置き換えません。
+
+親のreceiverは固定protocol・enum・数値だけを再構成し、未知のstdout・stderr・error文を保存しません。
+画像寿命のreceiptを先に保存し、任意の資源集計は別receiptにするため、集計の欠測で既取得の観測まで失いません。
+この専用pilotの資源集計は`NOT_EXERCISED`で、`resourceAcceptance=false`を維持します。
+仮にpilotが成立しても、確認できるのは当該小画像・当該processのCFオブジェクト寿命だけです。provider backing・ImageIO cache・allocator・RSS／footprint・物理消去、
+製品coordinatorの共有枠、全workloadや実UIの保持は未証明であり、旧ログのcoverageや既存の資源FAILへ遡って適用しません。
+
+開発者が別途診断条件を定める場合のbuild／実行入口は次のとおりです。新しい出力先が必要で、同じbuildの再起動は拒否します。
+buildだけでは実行せず、この手順を既存の未成立試行を上書きする再試行手順には使いません。
+
+```sh
+bash scripts/build_render_ownership_tools.sh --output-dir "$TMPDIR/oneclip-render-tools-new"
+python3 -B scripts/run_render_ownership_pilot.py \
+  --tools-dir "$TMPDIR/oneclip-render-tools-new" \
+  --output-dir "$TMPDIR/oneclip-render-result-new"
+```
+
 ## 本人開始式の実OS試験
 
 `SecurityRuntimeTrial`は専用の試験実行物です。通常起動/`--help`/`--self-test`ではOS操作やboardに触れません。
