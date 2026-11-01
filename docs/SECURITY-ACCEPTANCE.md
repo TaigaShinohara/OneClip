@@ -93,6 +93,25 @@ warmup/measured別のheartbeatは切分け用です。cold warmupを含むaggreg
 子processのtimeout・中断・wait失敗では、自分が起動したhandleだけを有限時間で終了・回収しようとします。
 handle未取得や回収確認不能は成功にせず、以後の試行を止めます。
 
+### 数値を変えない資源証拠の移行
+
+`scripts/migrate_resource_policy.py`は、未versionのcore／standard旧policyを、新しい観測証拠へ明示的に結び付ける専用入口です。
+旧policyのSHA-256、承認tools manifestのSHA-256とsource ID、全source／binaryと親実装のhashを実行前後に検査します。
+元から存在するnumeric leafはB・E・peak・RAM・画像予算・heartbeat・取消期限・試行数・長さまで完全保持します。
+既存の`calibrate`や旧policyの`rebind`は使わず、旧観測に新しい名前を付けて資格を復活させません。
+
+順序は画像なしcontrolの2warmup＋30測定を3 fresh、sync／asyncの2warmup＋10測定を各1 freshに固定します。
+最大5 child、待機はcontrol各45秒／baseline各15秒、全体180秒、owned cleanupは別の有限2＋2秒です。
+stdout512KiB・1行4KiB・8,192record、stderr4KiBまでの件数だけを扱い、未知の元出力やそのhashを保存しません。
+固定protocolから型検査済みscalarのreceiptを先に新規保存し、資格判定の固定reasonを別に記録します。
+最初のfresh試行の失敗・未成立を判定した後、後続childを起動しません。同じtools・policy・系列の再実行も拒否します。
+
+新controlから計算したEと、通常baselineから計算した取消期限Tは、どちらも旧値以下が必要です。新B／E／Tはwitnessにだけ記録します。
+baseline10でも、warmup後から末尾5点中央値への増加を元のEで検査します。測定区間のfirst→last増分が0でも、この増加を見落としません。
+peak・heartbeat・読戻し・新旧binding・欠測も検査し、全5試行が成立するまで新policyを書きません。
+成功しても意味は基準値を保持した証拠移行だけで、30cycleの画像資源受入・backing・全体合格を表しません。
+実表示・SCK・TCC・clipboard・画像保存はこの系列に含めず、停止済みのprovider weak診断を呼びません。
+
 ### 内部renderオブジェクトの限定観測
 
 現在、この診断のbuild／実行入口は停止しています。両scriptは`observer_withdrawn`、`NOT_ESTABLISHED`、
