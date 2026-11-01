@@ -92,6 +92,81 @@ def exact_iterations(rows: list[dict[str, str]], expected: int, kind: str, serie
     return selected
 
 
+def output_release_observation(row: dict[str, str], *, declared: bool,
+                               expected_scope: str) -> tuple[str, bool]:
+    """A nil weak reference proves release only after that returned image was observed.
+
+    Old cancellation/product records reported nil as released without observing an output.
+    Keep those scalar records readable, but never promote them to output-release coverage.
+    Even an observed CGImage's destruction does not prove its provider/allocator was freed.
+    """
+    released = integer(row, "outputReferenceReleased", minimum=-1)
+    observed = integer(row, "outputWasObserved") if "outputWasObserved" in row else None
+    if released not in (-1, 0, 1) or observed not in (None, 0, 1):
+        raise EvidenceError("invalid_output_release_state")
+    fields = {"outputObservationScope", "outputReferenceState"}
+    applicable = expected_scope not in ("not_applicable_no_images", "not_applicable_source_only")
+    if declared:
+        if not fields <= row.keys() or observed is None:
+            raise EvidenceError("incomplete_output_release_fields")
+        scope, state = row["outputObservationScope"], row["outputReferenceState"]
+        if scope != expected_scope:
+            raise EvidenceError("incorrect_output_observation_scope")
+        if not applicable:
+            expected = (-1, 0, "not_applicable")
+        elif scope == "returned_result":
+            expected = (released, 1, "observed_released" if released == 1 else "observed_retained")
+            if released == -1:
+                raise EvidenceError("output_reference_state_mismatch")
+        else:
+            expected = (-1, 0, "unobserved")
+        if (released, observed, state) != expected:
+            raise EvidenceError("output_reference_state_mismatch")
+    else:
+        if fields & row.keys():
+            raise EvidenceError("undeclared_output_release_fields")
+        if not applicable:
+            if observed == 1:
+                raise EvidenceError("unexpected_output_observation")
+            state = "not_applicable"
+        elif observed == 1:
+            if expected_scope != "returned_result":
+                raise EvidenceError("incorrect_output_observation_scope")
+            if released == -1:
+                raise EvidenceError("output_reference_state_mismatch")
+            state = "observed_released" if released == 1 else "observed_retained"
+        else:
+            state = "unobserved"
+    if released == 0:
+        raise EvidenceError("output_reference_retained")
+    return state, not declared and applicable and state == "unobserved"
+
+
+def output_release_established(summary: dict[str, Any]) -> bool:
+    # Reopened old summaries have no coverage field. Absence is unknown, never an implicit pass.
+    evidence = summary.get("outputReleaseEvidence")
+    if not isinstance(evidence, dict) or evidence.get("coverageEstablished") is not True:
+        return False
+    mode, cycles = summary.get("mode"), summary.get("cycles")
+    if summary.get("schema") != 2 or type(cycles) is not int or cycles <= 0:
+        return False
+    expected_scope = ("not_applicable_no_images" if mode in ("control", "product-control")
+                      else "not_applicable_source_only" if mode == "source-only"
+                      else "returned_result" if mode in ("sync", "async") else None)
+    if expected_scope is None or evidence.get("observationScope") != expected_scope:
+        return False
+    names = ("observations", "observedReleased", "unobserved", "notApplicable", "legacyAmbiguous")
+    if any(type(evidence.get(k)) is not int or evidence[k] < 0 for k in names):
+        return False
+    if evidence["observations"] != cycles + 2 or evidence["unobserved"] or evidence["legacyAmbiguous"]:
+        return False
+    if expected_scope == "returned_result":
+        return (evidence.get("applicable") is True and evidence["observedReleased"] == cycles + 2
+                and evidence["notApplicable"] == 0)
+    return (evidence.get("applicable") is False and evidence["notApplicable"] == cycles + 2
+            and evidence["observedReleased"] == 0)
+
+
 def summarize(text: str, *, legacy: bool = False) -> dict[str, Any]:
     rows = parse_log(text)
     scope, result = one(rows, "SCOPE"), one(rows, "RESULT")
@@ -116,9 +191,25 @@ def summarize(text: str, *, legacy: bool = False) -> dict[str, Any]:
     released = exact_iterations(rows, cycles, "MEMORY", "measured", "scope_released")
     warm = exact_iterations(rows, 2, "MEMORY", "warmup", "scope_released")
     ownership = exact_iterations(rows, cycles, "OWNERSHIP", "measured") + exact_iterations(rows, 2, "OWNERSHIP", "warmup")
+    output_schema = integer(scope, "outputReleaseSchema") if "outputReleaseSchema" in scope else None
+    if output_schema is not None and (schema != 2 or output_schema != 1):
+        raise EvidenceError("unsupported_output_release_schema")
+    if mode in ("control", "product-control") or (schema == 1 and integer(scope, "sourceCount") == 0):
+        output_scope = "not_applicable_no_images"
+    elif mode == "source-only":
+        output_scope = "not_applicable_source_only"
+    elif mode in ("sync", "async", "legacy-sync"):
+        output_scope = "returned_result"
+    else:
+        output_scope = "internal_render_unobserved"
+    output_states: list[str] = []
+    legacy_ambiguous = 0
     for r in ownership:
-        if any(integer(r, k) != target for k, target in (("passed", 1), ("batchOwnerReleased", 1), ("outputReferenceReleased", 1), ("sourceLiveBytes", 0))):
+        if any(integer(r, k) != target for k, target in (("passed", 1), ("batchOwnerReleased", 1), ("sourceLiveBytes", 0))):
             raise EvidenceError("ownership_not_released")
+        output_state, ambiguous = output_release_observation(r, declared=output_schema == 1, expected_scope=output_scope)
+        output_states.append(output_state)
+        legacy_ambiguous += int(ambiguous)
         if integer(r, "sourceCreated") != integer(r, "sourceReleased"):
             raise EvidenceError("source_provider_not_released")
         if schema == 2:
@@ -286,8 +377,18 @@ def summarize(text: str, *, legacy: bool = False) -> dict[str, Any]:
                         raise EvidenceError("missing_coordinator_source_render_boundary")
     durations = [integer(r, "elapsedNanoseconds", minimum=1) for r in ownership[:cycles]] if schema == 2 else []
     recoveries = [integer(r, "recoveryNanoseconds") for r in ownership[:cycles]] if mode in CANCELLATION_BASELINE else []
+    output_evidence = {"schema": output_schema, "observationScope": output_scope,
+                       "applicable": output_scope not in ("not_applicable_no_images", "not_applicable_source_only"),
+                       "coverageEstablished": all(s in ("observed_released", "not_applicable") for s in output_states),
+                       "observations": len(output_states),
+                       "observedReleased": output_states.count("observed_released"),
+                       "unobserved": output_states.count("unobserved"),
+                       "notApplicable": output_states.count("not_applicable"),
+                       "legacyAmbiguous": legacy_ambiguous,
+                       "backingRelease": "not_observed"}
     return {"schema": schema, "mode": mode, "workload": workload, "cycles": cycles,
             "metrics": summaries, "sampledPeaks": peaks, "heartbeat": heartbeat,
+            "outputReleaseEvidence": output_evidence,
             "durationMaximumNanoseconds": max(durations) if durations else None,
             "recoveryMaximumNanoseconds": max(recoveries) if recoveries else None,
             "idleTargets": targets, "recoveryScope": recovery_scope,
@@ -337,6 +438,8 @@ def build_policy(controls: list[dict[str, Any]], baselines: list[dict[str, Any]]
             raise EvidenceError("calibration_peak_exceeds_proposed_cap")
         if summary["heartbeat"] and summary["heartbeat"]["required"] and summary["heartbeat"]["maximumGapNanoseconds"] > 250_000_000:
             raise EvidenceError("calibration_heartbeat_exceeds_proposed_cap")
+        if not output_release_established(summary):
+            raise EvidenceError("calibration_output_release_not_established")
     caps = {s["mode"]: min(30_000_000_000, max(2_000_000_000, 2 * validate_baseline_duration(s))) for s in baselines}
     return {"schema": 1, "scope": "current_mac_synthetic_only", "workload": workload,
             "binarySHA256": binary_sha, "sourceID": source_id, "ramBytes": ram_bytes,
@@ -362,6 +465,8 @@ def calibration_guard(summary: dict[str, Any], peak: int) -> None:
     if summary["mode"] in ("control", "product-control"):
         if any(summary["metrics"][metric]["range"] > 8*MIB for metric in METRICS):
             raise EvidenceError("no_image_control_variation_over_8MiB")
+    if not output_release_established(summary):
+        raise EvidenceError("calibration_output_release_not_established")
 
 
 def evaluate(summary: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
@@ -391,6 +496,8 @@ def evaluate(summary: dict[str, Any], policy: dict[str, Any]) -> dict[str, Any]:
             violations.append(metric + "_continued_growth_two_blocks")
         if any(x > e for x in changes) or values["delta"] > e or values["idleDeltaFromFinalRelease"] > e:
             excess.append(metric + "_unexplained_growth")
+    if not output_release_established(summary):
+        excess.append("output_release_not_established")
     status = "failed" if violations else "needs_investigation" if excess else "passed_finite_current_mac"
     return {**summary, "acceptance": status, "violations": violations, "unexplainedExcess": excess,
             "cause": "not_inferred_from_release_or_malloc_counters"}
@@ -539,6 +646,16 @@ def validate_previous(path: Path | None, policy_sha: str, mode: str, cycles: int
     if (previous.get("policySHA256") != policy_sha or previous.get("mode") != mode
             or previous.get("cycles") != expected_cycles or previous.get("acceptance") != "needs_investigation"):
         raise EvidenceError("extension_scope_or_condition_not_met")
+    summaries = previous.get("summaries")
+    if not isinstance(summaries, list) or not summaries:
+        raise EvidenceError("extension_output_release_not_established")
+    if any(not isinstance(s, dict) or s.get("mode") != mode or s.get("cycles") != expected_cycles
+           or s.get("acceptance") not in ("needs_investigation", "passed_finite_current_mac") for s in summaries):
+        raise EvidenceError("extension_scope_or_condition_not_met")
+    if any(not output_release_established(s) for s in summaries):
+        # More cycles or longer idle cannot add the missing internal-image observer. Old
+        # cached summaries without this evidence remain readable, but cannot launch a child.
+        raise EvidenceError("extension_output_release_not_established")
 
 
 def main() -> int:
@@ -629,12 +746,19 @@ def main() -> int:
             raise EvidenceError("missing_frozen_workload_baseline")
         cap = policy["recoveryCapsNanoseconds"][duration_mode] / 1e9
         results = []
+        expansion_stop_reason = None
         for trial in range(1, trials + 1):
             summary = fresh(probe, out, mode=args.mode, workload=policy["workload"], cycles=args.cycles, trial=trial,
                             peak_bytes=policy["processPeakCapBytes"], timeout=(args.cycles + 2) * cap + (150 if args.extended_idle else 60),
                             extended=args.extended_idle, expected_binary_sha=binary_sha)
             verdict = evaluate(summary, policy); results.append(verdict)
             if verdict["acceptance"] == "failed":
+                expansion_stop_reason = "failed_acceptance"
+                break
+            if not output_release_established(verdict):
+                # Keep the first scalar result, but never spend further fresh processes on
+                # a release condition that this version of the harness cannot establish.
+                expansion_stop_reason = "output_release_not_established"
                 break
         status = "failed" if any(r["acceptance"] == "failed" for r in results) else "needs_investigation" if any(r["acceptance"] == "needs_investigation" for r in results) else "passed_finite_current_mac"
         prior_unexplained = args.cycles > 30 or args.extended_idle
@@ -643,6 +767,7 @@ def main() -> int:
         report = {"schema": 1, "mode": args.mode, "cycles": args.cycles, "policySHA256": policy_sha,
                   "acceptance": status, "completedFreshTrials": len(results), "requiredFreshTrials": trials,
                   "summaries": results, "priorExcessStillRequiresExplanation": prior_unexplained,
+                  "expansionStopReason": expansion_stop_reason,
                   "noAutomaticCriteriaRelaxation": True}
         name = f"result-{args.mode}-{args.cycles}" + ("-extended" if args.extended_idle else "") + ".json"
         write_new(out / name, report)

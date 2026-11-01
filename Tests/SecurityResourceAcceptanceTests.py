@@ -18,7 +18,7 @@ MIB = resources.MIB
 
 
 def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailable=None):
-    """A complete fixed synthetic evidence packet, including all required measurement points."""
+    """Fixed packets/points; product and cancellation outputs remain explicitly unobserved."""
     no_images = mode in ("control", "product-control")
     owner = mode in resources.OWNER_MODES
     owner_cancelled = mode in resources.OWNER_CANCEL_MODES
@@ -26,9 +26,12 @@ def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailab
     product = mode in ("product-states", "product-control")
     full_png = mode in ("sync", "async")
     png_returned = full_png or mode in resources.OWNER_FULL_MODES
+    output_scope = ("not_applicable_no_images" if no_images else "not_applicable_source_only" if mode == "source-only"
+                    else "returned_result" if full_png else "internal_render_unobserved")
+    output_state = "not_applicable" if no_images or mode == "source-only" else "observed_released" if full_png else "unobserved"
     recovery_scope = "coordinator_worker_slot" if owner_cancelled else "m0_wrapper_only" if mode in resources.CANCELLATION_BASELINE else "not_applicable"
     idle = [0] if cycles == 10 else [0, 5, 15, 30]
-    lines = [f"M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode={mode} workload=standard sourceCount={0 if no_images else 1 if owner and mode.startswith('product-single') else 4} board=not_exercised heartbeatSeries=2 warmupCycles=2 measuredCycles={cycles} idleTargetsSeconds={'_'.join(map(str,idle))} trial=1 recoveryScope={recovery_scope}",
+    lines = [f"M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode={mode} workload=standard sourceCount={0 if no_images else 1 if owner and mode.startswith('product-single') else 4} board=not_exercised heartbeatSeries=2 outputReleaseSchema=1 warmupCycles=2 measuredCycles={cycles} idleTargetsSeconds={'_'.join(map(str,idle))} trial=1 recoveryScope={recovery_scope}",
              f"M4_OWNER_LIMITS imageBudgetBytes={384*MIB} processPeakCapBytes={1024*MIB}",
              "M4_OWNER_IDLE_POLICY explicitRunLoopPump=0"]
 
@@ -48,7 +51,7 @@ def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailab
             if owner and mode.startswith("product-single"):
                 source_count = 1
             recovery = 1000000 if mode in resources.CANCELLATION_BASELINE else -1
-            lines.append(f"M4_OWNER_OWNERSHIP series={series} iteration={iteration} compositionSucceeded={int(not cancelled)} expectedCancellation={int(cancelled)} batchOwnerReleased=1 outputReferenceReleased=1 outputWasObserved={int(full_png)} sourceLiveBytes=0 sourceCreated={source_count} sourceReleased={source_count} pngBytes={1000 if png_returned else 0} actualImageBytes={10*MIB if full_png else 0} peakCapExceeded=0 elapsedNanoseconds=100000000 recoveryNanoseconds={recovery} passed=1")
+            lines.append(f"M4_OWNER_OWNERSHIP series={series} iteration={iteration} compositionSucceeded={int(not cancelled)} expectedCancellation={int(cancelled)} batchOwnerReleased=1 outputReferenceReleased={1 if full_png else -1} outputWasObserved={int(full_png)} outputObservationScope={output_scope} outputReferenceState={output_state} sourceLiveBytes=0 sourceCreated={source_count} sourceReleased={source_count} pngBytes={1000 if png_returned else 0} actualImageBytes={10*MIB if full_png else 0} peakCapExceeded=0 elapsedNanoseconds=100000000 recoveryNanoseconds={recovery} passed=1")
             phases = ["generation_pre", "sources_ready"]
             if mode not in ("source-only", "product-control", "product-states"):
                 phases += ["before_allocation"] + ([] if owner and mode.startswith("product-single") else [f"source_{i}" for i in range(4)]) + ["before_encoding"]
@@ -83,12 +86,24 @@ def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailab
     return "\n".join(lines) + "\n"
 
 
+def legacy_fixture(mode="sync", cycles=30):
+    """The old nil-is-released packet, without the new explicit observation fields."""
+    return "\n".join(" ".join(token.replace("outputReferenceReleased=-1", "outputReferenceReleased=1")
+        for token in line.split() if not token.startswith(("outputReleaseSchema=", "outputObservationScope=", "outputReferenceState=")))
+        for line in fixture(mode, cycles).splitlines()) + "\n"
+
+
 def policy(*, product=False, b=0):
     controls = [resources.summarize(fixture("control", growth=b//30)) for _ in range(3)]
-    baselines = [resources.summarize(fixture(mode, 10)) for mode in (resources.FULL_MODES if product else ("sync", "async"))]
+    baselines = [resources.summarize(fixture(mode, 10)) for mode in ("sync", "async")]
     product_controls = [resources.summarize(fixture("product-control")) for _ in range(3)] if product else None
-    return resources.build_policy(controls, baselines, ram_bytes=16*1024*MIB,
-                                  binary_sha="a"*64, source_id="b"*40, product_controls=product_controls)
+    frozen = resources.build_policy(controls, baselines, ram_bytes=16*1024*MIB,
+                                    binary_sha="a"*64, source_id="b"*40, product_controls=product_controls)
+    if product:
+        # Fixed fabricated policy inputs test recovery/other gates independently. The current
+        # real product probe does NOT establish output release and cannot create these baselines.
+        frozen["recoveryCapsNanoseconds"].update({mode: 2_000_000_000 for mode in resources.FULL_MODES[2:]})
+    return frozen
 
 
 class SecurityResourceAcceptanceTests(unittest.TestCase):
@@ -97,6 +112,91 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             result = resources.evaluate(resources.summarize(fixture(mode)), policy())
             self.assertEqual(result["acceptance"], "passed_finite_current_mac")
             self.assertEqual(result["physicalErasure"], "not_claimed")
+            self.assertTrue(result["outputReleaseEvidence"]["coverageEstablished"])
+            self.assertEqual(result["outputReleaseEvidence"]["observedReleased"], 32)
+
+    def test_output_not_applicable_is_explicit_for_controls_and_source_only(self):
+        for mode, scope in (("control", "not_applicable_no_images"), ("product-control", "not_applicable_no_images"),
+                            ("source-only", "not_applicable_source_only")):
+            summary = resources.summarize(fixture(mode))
+            evidence = summary["outputReleaseEvidence"]
+            self.assertEqual(evidence["observationScope"], scope)
+            self.assertFalse(evidence["applicable"])
+            self.assertTrue(evidence["coverageEstablished"])
+            self.assertEqual(evidence["notApplicable"], 32)
+            self.assertEqual(evidence["observedReleased"], 0)
+
+    def test_unobserved_render_and_product_outputs_are_readable_but_never_pass(self):
+        for mode in ("render-before-encode", "async-cancel-before-encode", "async-cancel-after-encode", "product-states") + resources.OWNER_MODES:
+            for old in (False, True):
+                text = legacy_fixture(mode) if old else fixture(mode)
+                summary = resources.summarize(text)
+                evidence = summary["outputReleaseEvidence"]
+                self.assertTrue(evidence["applicable"])
+                self.assertFalse(evidence["coverageEstablished"])
+                self.assertEqual(evidence["unobserved"], 32)
+                self.assertEqual(evidence["legacyAmbiguous"], 32 if old else 0)
+                verdict = resources.evaluate(summary, policy(product=True))
+                self.assertEqual(verdict["acceptance"], "needs_investigation")
+                self.assertIn("output_release_not_established", verdict["unexplainedExcess"])
+
+    def test_retained_contradictory_and_stale_output_observations_are_rejected(self):
+        normal = fixture()
+        cancelled = fixture("async-cancel-after-encode")
+        malformed = (
+            normal.replace("outputReferenceReleased=1", "outputReferenceReleased=0", 1)
+                .replace("outputReferenceState=observed_released", "outputReferenceState=observed_retained", 1),
+            normal.replace("outputReferenceReleased=1", "outputReferenceReleased=-1", 1),
+            normal.replace("outputWasObserved=1", "outputWasObserved=0", 1),
+            normal.replace("outputReferenceState=observed_released", "outputReferenceState=unobserved", 1),
+            cancelled.replace("outputReferenceReleased=-1", "outputReferenceReleased=1", 1),
+            cancelled.replace("outputObservationScope=internal_render_unobserved", "outputObservationScope=not_applicable_no_images", 1),
+            cancelled.replace("outputReferenceState=unobserved", "outputReferenceState=stale", 1),
+            normal.replace(" outputReferenceState=observed_released", "", 1),
+            normal.replace("outputReleaseSchema=1", "outputReleaseSchema=2", 1),
+            normal.replace(" outputReleaseSchema=1", "", 1),
+            legacy_fixture().replace("outputReferenceReleased=1", "outputReferenceReleased=0", 1),
+        )
+        for text in malformed:
+            with self.assertRaises(resources.EvidenceError):
+                resources.summarize(text)
+
+    def test_unknown_output_baseline_stops_policy_and_calibration(self):
+        controls = [resources.summarize(fixture("control")) for _ in range(3)]
+        product_controls = [resources.summarize(fixture("product-control")) for _ in range(3)]
+        for mode in resources.FULL_MODES[2:]:
+            for old in (False, True):
+                baseline = resources.summarize(legacy_fixture(mode, 10) if old else fixture(mode, 10))
+                with self.assertRaisesRegex(resources.EvidenceError, "output_release_not_established"):
+                    resources.calibration_guard(baseline, 1024*MIB)
+                with self.assertRaisesRegex(resources.EvidenceError, "output_release_not_established"):
+                    resources.build_policy(controls, [baseline], ram_bytes=16*1024*MIB, binary_sha="a"*64,
+                                           source_id="b"*40, product_controls=product_controls)
+
+    def test_old_observed_result_is_distinct_from_missing_summary_coverage(self):
+        summary = resources.summarize(legacy_fixture())
+        self.assertTrue(summary["outputReleaseEvidence"]["coverageEstablished"])
+        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "passed_finite_current_mac")
+        del summary["outputReleaseEvidence"]
+        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
+
+    def test_summary_coverage_flag_alone_cannot_admit_unobserved_or_stale_counts(self):
+        for mode in ("async-cancel-after-encode", "product-states"):
+            summary = resources.summarize(fixture(mode))
+            summary["outputReleaseEvidence"]["coverageEstablished"] = True
+            self.assertEqual(resources.evaluate(summary, policy(product=True))["acceptance"], "needs_investigation")
+        for key, value in (("observations", 31), ("observedReleased", 31), ("unobserved", 1),
+                           ("notApplicable", 1), ("legacyAmbiguous", 1), ("applicable", False)):
+            summary = resources.summarize(fixture())
+            summary["outputReleaseEvidence"][key] = value
+            self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
+
+    def test_legacy_missing_observation_is_unknown_not_a_release(self):
+        text = legacy_fixture().replace(" schema=2", "").replace(" mode=sync", "").replace(" workload=standard", "")
+        text = text.replace(" outputWasObserved=1", "")
+        summary = resources.summarize(text, legacy=True)
+        self.assertFalse(summary["outputReleaseEvidence"]["coverageEstablished"])
+        self.assertEqual(summary["outputReleaseEvidence"]["legacyAmbiguous"], 32)
 
     def test_missing_or_negative_metrics_are_not_zero(self):
         for metric in ("rss", "physicalFootprint", "processHighWater"):
@@ -187,7 +287,8 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
         for mode in ("sync", "async", "async-cancel-after-encode"):
             summary = resources.summarize(fixture(mode))
             summary["durationMaximumNanoseconds"] = 25_000_000_000
-            self.assertEqual(resources.evaluate(summary, frozen)["acceptance"], "passed_finite_current_mac")
+            self.assertEqual(resources.evaluate(summary, frozen)["acceptance"],
+                             "needs_investigation" if mode in resources.CANCELLATION_BASELINE else "passed_finite_current_mac")
         summary["recoveryMaximumNanoseconds"] = 2_000_000_001
         self.assertIn("worker_recovery_cap", resources.evaluate(summary, frozen)["violations"])
 
@@ -199,7 +300,7 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
 
     def test_real_product_ownership_and_state_coverage_are_required(self):
         frozen = policy(product=True)
-        self.assertEqual(resources.evaluate(resources.summarize(fixture("product-states")), frozen)["acceptance"], "passed_finite_current_mac")
+        self.assertEqual(resources.evaluate(resources.summarize(fixture("product-states")), frozen)["acceptance"], "needs_investigation")
         for text in (fixture("product-states").replace("viewReleased=1", "viewReleased=0", 1),
                      fixture("product-states").replace("productWindowDisplayed=0", "productWindowDisplayed=1", 1),
                      fixture("product-states").replace("dropped=0", "dropped=1", 1),
@@ -210,7 +311,7 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
 
     def test_cancellation_recovery_uses_frozen_workload_cap(self):
         summary = resources.summarize(fixture("async-cancel-after-encode"))
-        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "passed_finite_current_mac")
+        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
         summary["recoveryMaximumNanoseconds"] = 2_000_000_001
         self.assertIn("worker_recovery_cap", resources.evaluate(summary, policy())["violations"])
 
@@ -220,7 +321,7 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             text = fixture(mode)
             summary = resources.summarize(text)
             self.assertEqual(summary["recoveryScope"], "coordinator_worker_slot")
-            self.assertEqual(resources.evaluate(summary, frozen)["acceptance"], "passed_finite_current_mac")
+            self.assertEqual(resources.evaluate(summary, frozen)["acceptance"], "needs_investigation")
             for before, after in (("busyAtCancellation=1", "busyAtCancellation=0"),
                                   ("slotAtCancellation=1", "slotAtCancellation=0"),
                                   ("workerIsWorking=0", "workerIsWorking=1"),
@@ -240,7 +341,7 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             summary = resources.summarize(fixture(f"product-{owner}-cancel-after-encode"))
             summary["recoveryMaximumNanoseconds"] = 3_000_000_000
             actual = resources.evaluate(summary, frozen)["acceptance"]
-            self.assertEqual(actual, "failed" if owner == "single" else "passed_finite_current_mac")
+            self.assertEqual(actual, "failed" if owner == "single" else "needs_investigation")
         del frozen["recoveryCapsNanoseconds"]["product-single"]
         with self.assertRaisesRegex(resources.EvidenceError, "owner_specific"):
             resources.evaluate(resources.summarize(fixture("product-single-cancel-before-encode")), frozen)
@@ -435,13 +536,14 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
                 self.assertEqual(report["cleanup_classification"], "child_state_unknown_no_handle")
                 self.assertNotIn("unprinted-launch-detail", json.dumps(report))
 
-    def test_source_render_ablations_repeat_three_fresh_children_but_cancellation_once(self):
-        for mode in ("source-only", "render-before-encode", "async-cancel-before-encode"):
+    def test_output_unknown_stops_first_child_while_established_scopes_can_repeat(self):
+        for mode in ("source-only", "sync", "async", "render-before-encode", "async-cancel-before-encode",
+                     "async-cancel-after-encode", "product-states", "product-single", "product-collection"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
                 root = Path(directory)
                 probe = root / "placeholder"
                 probe.write_bytes(b"fixed-test-placeholder"); probe.chmod(0o700)
-                frozen = policy(); frozen["binarySHA256"] = resources.digest(probe)
+                frozen = policy(product=True); frozen["binarySHA256"] = resources.digest(probe)
                 policy_path = root / "policy.json"; policy_path.write_text(json.dumps(frozen))
                 argv = ["fixed-runner", "run", "--probe", str(probe), "--out", str(root / "out"),
                         "--policy", str(policy_path), "--mode", mode]
@@ -450,12 +552,20 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
                 with mock.patch.object(resources.sys, "argv", argv), mock.patch.object(resources, "fresh", return_value=summary) as run, redirect_stdout(output):
                     code = resources.main()
                 report = json.loads(output.getvalue())
-                expected = 3 if mode in resources.REPEATED_ABLATION_MODES else 1
-                self.assertEqual(code, 0)
-                self.assertEqual(run.call_count, expected)
-                self.assertEqual(report["requiredFreshTrials"], expected)
-                self.assertEqual(report["completedFreshTrials"], expected)
-                self.assertEqual([call.kwargs["trial"] for call in run.call_args_list], list(range(1, expected + 1)))
+                required = 3 if mode in resources.FULL_MODES + resources.REPEATED_ABLATION_MODES else 1
+                established = mode in ("source-only", "sync", "async")
+                completed = required if established else 1
+                self.assertEqual(code, 0 if established else 1)
+                self.assertEqual(run.call_count, completed)
+                self.assertEqual(report["requiredFreshTrials"], required)
+                self.assertEqual(report["completedFreshTrials"], completed)
+                self.assertEqual(report["acceptance"], "passed_finite_current_mac" if established else "needs_investigation")
+                self.assertEqual(report["expansionStopReason"], None if established else "output_release_not_established")
+                self.assertEqual([call.kwargs["trial"] for call in run.call_args_list], list(range(1, completed + 1)))
+                saved = json.loads((root / "out" / f"result-{mode}-30.json").read_text())
+                self.assertEqual(len(saved["summaries"]), completed)
+                if not established:
+                    self.assertIn("output_release_not_established", saved["summaries"][0]["unexplainedExcess"])
 
     def test_repeated_ablation_stops_at_first_failed_acceptance(self):
         with tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
@@ -475,8 +585,46 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(run.call_count, 1)
             self.assertEqual(report["acceptance"], "failed")
+            self.assertEqual(report["expansionStopReason"], "failed_acceptance")
             self.assertEqual(report["requiredFreshTrials"], 3)
             self.assertEqual(report["completedFreshTrials"], 1)
+
+    def test_unknown_previous_output_cannot_launch_longer_or_extended_trials(self):
+        for cycles, extended, previous_cycles in ((60, False, 30), (90, False, 60),
+                                                  (30, True, 30), (60, True, 60), (90, True, 90)):
+            for missing_coverage in (False, True):
+                with self.subTest(cycles=cycles, extended=extended, old_summary=missing_coverage), \
+                        tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
+                    root = Path(directory)
+                    probe = root / "placeholder"
+                    probe.write_bytes(b"fixed-test-placeholder"); probe.chmod(0o700)
+                    frozen = policy(); frozen["binarySHA256"] = resources.digest(probe)
+                    policy_path = root / "policy.json"; policy_path.write_text(json.dumps(frozen))
+                    mode = "async-cancel-after-encode"
+                    summary = resources.evaluate(resources.summarize(fixture(mode, previous_cycles)), frozen)
+                    if missing_coverage:
+                        del summary["outputReleaseEvidence"]
+                    previous_path = root / "previous.json"
+                    previous = {"policySHA256": resources.digest(policy_path), "mode": mode,
+                                "cycles": previous_cycles, "acceptance": "needs_investigation", "summaries": [summary]}
+                    previous_path.write_text(json.dumps(previous))
+                    argv = ["fixed-runner", "run", "--probe", str(probe), "--out", str(root / "out"),
+                            "--policy", str(policy_path), "--mode", mode, "--cycles", str(cycles),
+                            "--previous", str(previous_path)] + (["--extended-idle"] if extended else [])
+                    output = io.StringIO()
+                    with mock.patch.object(resources.sys, "argv", argv), mock.patch.object(resources, "fresh") as run, redirect_stdout(output):
+                        code = resources.main()
+                    self.assertEqual(code, 2)
+                    run.assert_not_called()
+                    self.assertEqual(json.loads(output.getvalue())["reason"], "extension_output_release_not_established")
+                    # A valid previous end-block growth case with observed output retains the
+                    # existing conditional path; the new guard is not a blanket extension ban.
+                    known = resources.evaluate(resources.summarize(fixture("async", previous_cycles,
+                        growth=MIB if previous_cycles == 30 else 200000)), frozen)
+                    self.assertEqual(known["acceptance"], "needs_investigation")
+                    previous.update(mode="async", summaries=[known])
+                    previous_path.write_text(json.dumps(previous))
+                    resources.validate_previous(previous_path, resources.digest(policy_path), "async", cycles, extended=extended)
 
     def test_unknown_record_does_not_echo_content(self):
         with self.assertRaisesRegex(resources.EvidenceError, "unexpected_log_record"):
