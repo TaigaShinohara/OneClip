@@ -602,7 +602,62 @@ build manifestは`c75868279bfd348e2bf3bece4b588563404a5a3a070f96d5c7ea3f1fee008f
 4条件の成立も、内部renderのCGImage・provider解放も確認できていません。再試行・後続への拡大は行っていません。
 
 このツールは既知の未成立を明示したopt-in診断であり、通常の検証合格や製品機能へ組み込みません。
+後続の[読戻し契約の修正と入口停止](#security-output-readback-20261101)に従い、現在のbuild／実行入口は停止しています。
 `backingRelease=not_observed`、資源集計`NOT_EXERCISED`、`resourceAcceptance=false`を保持します。
 旧ログの未観測、未説明のRSS／footprint増加、cold UI超過、実SCKの1px不一致は未解決のままです。
 資源系列の再開には、異常終了やbackingの所有について新たな区別可能な根拠と有限予算が必要です。
 表示試験の延期、本人開始のOS／一般clipboard、最低OS／Intel等の必須残件、M4総合とCollection VoiceOverの保留を維持します。
+
+<a id="security-output-readback-20261101"></a>
+## 観測済みの読戻し確認と未成立診断の停止（2026-11-01）
+
+対象はR09／T05・T09／D05・D16の観測・有限判定です。製品コードと署名対象は変更していません。
+
+### 出力参照の代入と実観測を分離
+
+既存の資源Probeは、返却画像をweak変数へ代入した直後に`outputWasObserved=true`としていました。
+代入が実際に同じ画像を読み戻せる状態になったか確認していないため、後のnilを厳密な解放証拠へ使う契約が不足していました。
+これを当該Macでのweak登録失敗や、前節のsignal6の原因を確定した所見とは扱いません。
+
+新しい`outputReleaseSchema=2`は、`withExtendedLifetime`で元画像を保持した区間に代入とweak読戻しを置き、
+`===`で同じ画像だった場合だけ観測済みとします。各試行のflagをリセットし、前の成功を流用しません。
+PNGの返却とweak生存確認は分離します。PNGが返っても読戻しがnil／別参照なら、返却scopeのまま解放-1・未観測を記録します。
+
+親は旧schema1とlegacyのscalarを保持しますが、`legacy_unconfirmed_readback`として解放coverageへ使いません。
+旧summaryのtrue flag・件数だけで資格を復活させず、旧policyのrun／rebind、旧summaryによる60／90cycle・extended idleを起動前に拒否します。
+画像なし・source-onlyの対象外記録は保持し、現在の校正へ黙って転用しません。閾値の再校正や緩和は行っていません。
+
+旧count2系列の各32件は、観測済み解放0・未確認32件として再分類しました。
+warmup後を基準とする末尾5点中央値のRSS／footprint増分209,420,288／217,202,856 bytesと146,210,816／144,195,704 bytesは不変です。
+初回countログに含まれる既知の補助recordは完全一致で分離し、未知のrecordを捨てて成功へ変換していません。
+過去の小画像同期summaryにある解放12件と画像なしsummaryも、旧schema1のままでは現在の観測資格へ使えません。
+旧素材生成・解放等の既済scalarや、過去のFAIL／未実証を削除してはいません。
+
+### provider weak診断の入口停止
+
+公開仕様・runtimeを確認しましたが、任意のproviderのweak登録を非trapで事前判定できる利用可能な公開APIは確認できませんでした。
+weak登録後の正対照は、登録そのものの互換性を検査できません。根拠と条件は[限定受入](SECURITY-ACCEPTANCE.md#内部renderオブジェクトの限定観測)へ記載しました。
+providerのweak診断builder／runnerは、入力読取り・出力作成・compiler検索・起動予約へ進まず、固定`observer_withdrawn`で停止します。
+旧sourceとreceiptは経緯として残し、今回の画像process起動・再試行は0です。前節のsignal6、原因・内部到達点の不明、解放未実証は不変です。
+製品のCGImage借用を今回の結果だけで非対応と断定したり、無条件の強保持へ変えて残留を作ったりしていません。
+
+### 回帰・ビルド・証拠の対応
+
+Python全204件、通常のSwiftクラスだけを使った5対照、shell構文検査が成功しました。
+5対照は同一参照、未登録、別／失効済み参照、呼出し側の保持を落としても読戻し中に生存すること、前回成功の流用防止です。
+この結果はCFオブジェクト・実画像・backingの解放証拠ではありません。
+
+新helperをbuild入力へ含め、ownership-probe・Runtime・fixtureの3実行物のcompileが成功しました。いずれも起動していません。
+先に別作業のSwift buildを検出して停止した後、その終了を確認してbuildしました。他作業の終了・変更は行っていません。
+tools入力IDは`24469fcd88c9869a68544b0c1124fe4842891a67`、ownership-probeは
+`1cd2e1cace2c7e0cd1eaf1bc5503c974a65347015368b055fca3fe25e91d4569`です。
+新manifestの実読込み・入力／全binary hashの照合も、child起動0で成功しました。
+
+独立レビューで見つかったmanifest許可名の不整合を、新helperの正確な名前だけを許す変更で修正しました。
+同じ入力境界のFIFOがopenで待ち続ける問題は`O_NONBLOCK`とread前のregular検査で拒否します。
+writerなしFIFO・directory・symlinkを各3秒上限のPython childで検査し、読取り0・Runtime起動0・FD closeを確認しました。
+旧manifest互換、未知／似名の拒否、未観測PNGのscalar保持、旧policy・延長の起動0、既存FAIL優先も回帰に含みます。
+
+製品入力32件は引き続き`a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08`です。
+資源の実測合格、CF互換性、backing、cold UI、実SCK1pxは未解決・未実証のままです。
+表示・本人OS／一般clipboard・宣言環境の再開条件、M4総合とCollection VoiceOverの保留を維持します。
