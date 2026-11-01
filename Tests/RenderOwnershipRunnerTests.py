@@ -3,10 +3,12 @@
 from contextlib import ExitStack
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -134,10 +136,48 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         self.assertFalse(manifest["pilotExecuted"])
         self.assertFalse(manifest["resourceAcceptance"])
 
+    def test_withdrawn_public_function_rejects_before_inputs_outputs_or_launch(self):
+        with mock.patch.object(runner, "verify_build") as verify, \
+                mock.patch.object(runner.preparation, "_new_output_directory") as create, \
+                mock.patch.object(runner.subprocess, "Popen") as launch:
+            with self.assertRaisesRegex(runner.RunnerError, "^observer_withdrawn$"):
+                runner.run_pilot(self.repo, self.tools, self.output)
+        verify.assert_not_called(); create.assert_not_called(); launch.assert_not_called()
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.tools / "launch-claim.json").exists())
+
+    def test_withdrawn_cli_records_zero_launches_without_validating_paths(self):
+        arguments = ["run_render_ownership_pilot.py", "--tools-dir", "/unread-closed-observer",
+                     "--output-dir", "/uncreated-closed-observer"]
+        output = io.StringIO()
+        with mock.patch.object(sys, "argv", arguments), \
+                mock.patch.object(sys, "stdout", output), \
+                mock.patch.object(runner, "verify_build") as verify, \
+                mock.patch.object(runner.subprocess, "Popen") as launch:
+            self.assertEqual(runner.main(), 2)
+        verify.assert_not_called(); launch.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), {
+            "state": "NOT_ESTABLISHED", "reason": "observer_withdrawn",
+            "childLaunches": 0, "resourceAcceptance": False})
+
+    def test_withdrawn_builder_uses_no_toolchain_and_creates_no_output(self):
+        target = self.base / "not-created-by-withdrawn-builder"
+        for arguments in (["--output-dir", str(target)], ["--help"], []):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run(["/bin/bash", str(ROOT / "scripts/build_render_ownership_tools.sh"),
+                                         *arguments], env={"PATH": "/no-observer-toolchain"},
+                                        capture_output=True, timeout=3, check=False)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(json.loads(result.stdout), {
+                    "state": "NOT_ESTABLISHED", "reason": "observer_withdrawn",
+                    "childLaunches": 0, "resourceAcceptance": False})
+                self.assertFalse(target.exists())
+
     def test_one_launch_no_args_minimal_environment_and_object_receipt(self):
         with ExitStack() as stack:
             launch, process = fake_capture(stack, fixture.packet())
-            code, report = runner.run_pilot(self.repo, self.tools, self.output)
+            code, report = runner._run_bound_trial(self.repo, self.tools, self.output)
         self.assertEqual(code, 0)
         self.assertEqual(report["objectObservation"], "ESTABLISHED_OBJECT_LIFETIME_ONLY")
         self.assertEqual(report["resourceSummary"]["status"], "NOT_EXERCISED")
@@ -155,10 +195,10 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
     def test_build_launch_reservation_prevents_replay_with_a_new_output(self):
         with ExitStack() as stack:
             launch, _ = fake_capture(stack, fixture.packet())
-            runner.run_pilot(self.repo, self.tools, self.output)
+            runner._run_bound_trial(self.repo, self.tools, self.output)
             old_claim = (self.tools / "launch-claim.json").read_bytes()
             with self.assertRaisesRegex(runner.RunnerError, "launch_already_claimed"):
-                runner.run_pilot(self.repo, self.tools, self.base / "second-result")
+                runner._run_bound_trial(self.repo, self.tools, self.base / "second-result")
             launch.assert_called_once()
         self.assertEqual((self.tools / "launch-claim.json").read_bytes(), old_claim)
 
@@ -169,7 +209,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
             path.write_bytes(original + b"\nsynthetic mismatch\n")
             with self.subTest(name=path.name), mock.patch.object(runner.subprocess, "Popen") as launch:
                 with self.assertRaises(runner.RunnerError):
-                    runner.run_pilot(self.repo, self.tools, self.output)
+                    runner._run_bound_trial(self.repo, self.tools, self.output)
                 launch.assert_not_called()
                 self.assertFalse(self.output.exists())
             path.write_bytes(original)
@@ -186,7 +226,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         with ExitStack() as stack:
             launch, _ = fake_capture(stack, fixture.packet())
             stack.enter_context(mock.patch.object(runner, "capture_once", side_effect=capture_then_change_source))
-            code, report = runner.run_pilot(self.repo, self.tools, self.output)
+            code, report = runner._run_bound_trial(self.repo, self.tools, self.output)
         launch.assert_called_once()
         self.assertEqual(code, 2)
         self.assertEqual(report["protocolStatus"], "VALID_FIXED_PROTOCOL")
@@ -203,7 +243,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         marker.write_bytes(b"synthetic existing file")
         with mock.patch.object(runner.subprocess, "Popen") as launch:
             with self.assertRaises(runner.preparation.PreparationError):
-                runner.run_pilot(self.repo, self.tools, self.output)
+                runner._run_bound_trial(self.repo, self.tools, self.output)
             launch.assert_not_called()
         self.assertFalse((self.tools / "launch-claim.json").exists())
         self.assertEqual(marker.read_bytes(), b"synthetic existing file")
@@ -215,7 +255,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         binary.symlink_to(backup)
         with mock.patch.object(runner.subprocess, "Popen") as launch:
             with self.assertRaises(OSError):
-                runner.run_pilot(self.repo, self.tools, self.output)
+                runner._run_bound_trial(self.repo, self.tools, self.output)
             launch.assert_not_called()
         binary.unlink(); backup.rename(binary)
         parent = self.base / "unsafe"
@@ -225,7 +265,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         parent.chmod(0o777)
         with mock.patch.object(runner.subprocess, "Popen") as launch:
             with self.assertRaisesRegex(runner.RunnerError, "temporary_parent_unsafe"):
-                runner.run_pilot(self.repo, moved, self.output)
+                runner._run_bound_trial(self.repo, moved, self.output)
             launch.assert_not_called()
 
     def test_fifo_and_directory_types_are_rejected_before_any_read(self):
@@ -307,7 +347,7 @@ class RenderOwnershipRunnerTests(unittest.TestCase):
         private = b"synthetic-unapproved-text"
         with ExitStack() as stack:
             launch, _ = fake_capture(stack, private, stderr=private)
-            code, report = runner.run_pilot(self.repo, self.tools, self.output)
+            code, report = runner._run_bound_trial(self.repo, self.tools, self.output)
         launch.assert_called_once()
         self.assertEqual(code, 2)
         self.assertEqual(report["objectObservation"], "NOT_ESTABLISHED")

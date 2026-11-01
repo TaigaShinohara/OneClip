@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Run one source-bound, object-lifetime-only pilot. No retry or resource acceptance."""
+"""Withdrawn render-object diagnostic. Public entry points never launch a child.
+
+The bounded capture/binding helpers remain for fixed-protocol regressions and
+historical evidence analysis. They are not an approved live observer.
+"""
 
 import argparse
 import hashlib
@@ -298,6 +302,12 @@ def capture_once(binary, working_directory):
 
 
 def run_pilot(repo, tools, output):
+    """Reject before input access, output creation, or process reservation."""
+    raise RunnerError("observer_withdrawn")
+
+
+def _run_bound_trial(repo, tools, output):
+    """Regression seam for fake children; never reached by a public entry point."""
     tools, manifest, manifest_hash = verify_build(repo, tools)
     directory = preparation._new_output_directory(output, Path(repo).absolute())
     os.close(directory)
@@ -344,7 +354,8 @@ def main():
         return code
     except (RunnerError, preparation.PreparationError) as error:
         # Both exception classes are constructed only from fixed classifications.
-        print(json.dumps({"state": "NOT_ESTABLISHED", "reason": str(error), "resourceAcceptance": False}))
+        print(json.dumps({"state": "NOT_ESTABLISHED", "reason": str(error),
+                          "childLaunches": 0, "resourceAcceptance": False}))
     except BaseException:
         print('{"state":"NOT_ESTABLISHED","reason":"runner_failed","resourceAcceptance":false}')
     return 2
