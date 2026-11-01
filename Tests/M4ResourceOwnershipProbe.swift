@@ -7,7 +7,8 @@ import AppKit
 
 /// Opt-in, finite, fresh-process diagnostic. Never captures a screen, accesses a pasteboard,
 /// writes an image, or contacts a service. The runner supplies acceptance policy separately.
-/// Compile with M0ImageCore.swift and CaptureSecurityTrace.swift; product-state coverage also
+/// Compile with M0ImageCore.swift, CaptureSecurityTrace.swift and OutputReferenceObservation.swift;
+/// product-state coverage also
 /// requires the product sources (without OneClipApp's @main) and the explicit compilation flag.
 @main
 struct M4ResourceOwnershipProbe {
@@ -104,6 +105,14 @@ struct M4ResourceOwnershipProbe {
         weak var batch: OwnedBatch?
         weak var output: CGImage?
         var outputWasObserved = false
+
+        func observeOutput(_ image: CGImage) {
+            outputWasObserved = false
+            outputWasObserved = OutputReferenceObservation.matchesIdentity(of: image) {
+                output = image
+                return output
+            }
+        }
     }
     /// Only synthetic cancellation trials wait here. The bounded worker wait ensures the parent
     /// cancellation reaches the real async wrapper before the worker leaves the chosen boundary.
@@ -313,7 +322,7 @@ struct M4ResourceOwnershipProbe {
         do { config = try Configuration(arguments: Array(CommandLine.arguments.dropFirst())) }
         catch { print("M4_OWNER_ABORT reason=invalid_arguments"); exit(2) }
         let sourceCount = [.control, .productControl].contains(config.mode) ? 0 : config.mode.isSingleOwner ? 1 : config.workload.dimensions.count
-        print("M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode=\(config.mode.rawValue) workload=\(config.workload.rawValue) sourceCount=\(sourceCount) board=not_exercised heartbeatSeries=2 outputReleaseSchema=1 warmupCycles=2 measuredCycles=\(config.cycles) idleTargetsSeconds=\(([UInt64(0)] + config.idleTargets).map(String.init).joined(separator: "_")) trial=\(config.trial) recoveryScope=\(config.mode.recoveryScope)")
+        print("M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode=\(config.mode.rawValue) workload=\(config.workload.rawValue) sourceCount=\(sourceCount) board=not_exercised heartbeatSeries=2 outputReleaseSchema=2 warmupCycles=2 measuredCycles=\(config.cycles) idleTargetsSeconds=\(([UInt64(0)] + config.idleTargets).map(String.init).joined(separator: "_")) trial=\(config.trial) recoveryScope=\(config.mode.recoveryScope)")
         print("M4_OWNER_LIMITS sourceProviderRelease=tracked batchRelease=weak_observation outputReferenceRelease=weak_observation PNGBackingRelease=unobserved ImageIOCaches=unobserved physicalErasure=not_claimed imageBudgetBytes=\(M0ImageLimits().maximumImageBytes) processPeakCapBytes=\(config.peakBytes) memoryAPIs=sequential_snapshots allocatorStatistics=all_zones ownProcessOnly=1")
         print("M4_OWNER_IDLE_POLICY explicitRunLoopPump=0 externalInspection=0 pressureRelief=0 forcedCollection=0 backgroundLoad=uncontrolled observationAndReportingMayAffectProcessMemory=1")
         reportMemory(phase: "baseline", series: "baseline", iteration: 0, elapsedNanoseconds: 0, value: observe())
@@ -412,7 +421,7 @@ struct M4ResourceOwnershipProbe {
                             expectedCancellation = true
                         }
                         if let result = batch.completed {
-                            owners.output = result.image; owners.outputWasObserved = true
+                            owners.observeOutput(result.image)
                             pngBytes = result.pngData.count; imageBytes = result.actualImageBytes
                             succeeded = true
                         }
@@ -428,6 +437,7 @@ struct M4ResourceOwnershipProbe {
         let expectedCount = noImages ? 0 : config.mode == .product ? allocation.created : config.mode.isSingleOwner ? 1 : config.workload.dimensions.count
         let cancellationMode = config.mode.isOwnerCancellation || [.renderOnly, .cancelBefore, .cancelAfter].contains(config.mode)
         let expectedSuccess = cancellationMode ? expectedCancellation && !succeeded && phases.reachedEncode : succeeded
+        // Schema 2 marks outputWasObserved only after a strong-fenced identity readback.
         // Only sync/async returned results reach WeakOwners.output. Cancellation and product
         // internals may render images without exposing them to this weak observation. A nil
         // never-observed reference is unknown (-1), not evidence that the render image died.
@@ -435,7 +445,7 @@ struct M4ResourceOwnershipProbe {
         let outputReferenceReleased = owners.outputWasObserved ? (owners.output == nil ? 1 : 0) : -1
         let outputObservationScope = noImages ? "not_applicable_no_images"
             : config.mode == .sourceOnly ? "not_applicable_source_only"
-            : owners.outputWasObserved ? "returned_result" : "internal_render_unobserved"
+            : [.sync, .async].contains(config.mode) ? "returned_result" : "internal_render_unobserved"
         let outputReferenceState = !outputApplicable ? "not_applicable"
             : !owners.outputWasObserved ? "unobserved"
             : owners.output == nil ? "observed_released" : "observed_retained"
@@ -461,7 +471,7 @@ struct M4ResourceOwnershipProbe {
         batch.completed = try await M0ImageComposer.composeCancellable(assets: batch.sources,
             checkCancellation: { measurements.checkpoint($0) })
         guard let result = batch.completed else { throw ProbeFailure.missingOutput }
-        owners.output = result.image; owners.outputWasObserved = true
+        owners.observeOutput(result.image)
         return (result.pngData.count, result.actualImageBytes)
     }
 

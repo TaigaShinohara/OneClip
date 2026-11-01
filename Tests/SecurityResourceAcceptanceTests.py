@@ -17,7 +17,7 @@ spec.loader.exec_module(resources)
 MIB = resources.MIB
 
 
-def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailable=None):
+def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailable=None, output_schema=2):
     """Fixed packets/points; product and cancellation outputs remain explicitly unobserved."""
     no_images = mode in ("control", "product-control")
     owner = mode in resources.OWNER_MODES
@@ -31,7 +31,7 @@ def fixture(mode="sync", cycles=30, *, growth=0, heartbeat=50_000_000, unavailab
     output_state = "not_applicable" if no_images or mode == "source-only" else "observed_released" if full_png else "unobserved"
     recovery_scope = "coordinator_worker_slot" if owner_cancelled else "m0_wrapper_only" if mode in resources.CANCELLATION_BASELINE else "not_applicable"
     idle = [0] if cycles == 10 else [0, 5, 15, 30]
-    lines = [f"M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode={mode} workload=standard sourceCount={0 if no_images else 1 if owner and mode.startswith('product-single') else 4} board=not_exercised heartbeatSeries=2 outputReleaseSchema=1 warmupCycles=2 measuredCycles={cycles} idleTargetsSeconds={'_'.join(map(str,idle))} trial=1 recoveryScope={recovery_scope}",
+    lines = [f"M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode={mode} workload=standard sourceCount={0 if no_images else 1 if owner and mode.startswith('product-single') else 4} board=not_exercised heartbeatSeries=2 outputReleaseSchema={output_schema} warmupCycles=2 measuredCycles={cycles} idleTargetsSeconds={'_'.join(map(str,idle))} trial=1 recoveryScope={recovery_scope}",
              f"M4_OWNER_LIMITS imageBudgetBytes={384*MIB} processPeakCapBytes={1024*MIB}",
              "M4_OWNER_IDLE_POLICY explicitRunLoopPump=0"]
 
@@ -153,8 +153,8 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             cancelled.replace("outputObservationScope=internal_render_unobserved", "outputObservationScope=not_applicable_no_images", 1),
             cancelled.replace("outputReferenceState=unobserved", "outputReferenceState=stale", 1),
             normal.replace(" outputReferenceState=observed_released", "", 1),
-            normal.replace("outputReleaseSchema=1", "outputReleaseSchema=2", 1),
-            normal.replace(" outputReleaseSchema=1", "", 1),
+            normal.replace("outputReleaseSchema=2", "outputReleaseSchema=3", 1),
+            normal.replace(" outputReleaseSchema=2", "", 1),
             legacy_fixture().replace("outputReferenceReleased=1", "outputReferenceReleased=0", 1),
         )
         for text in malformed:
@@ -173,12 +173,24 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
                     resources.build_policy(controls, [baseline], ram_bytes=16*1024*MIB, binary_sha="a"*64,
                                            source_id="b"*40, product_controls=product_controls)
 
-    def test_old_observed_result_is_distinct_from_missing_summary_coverage(self):
-        summary = resources.summarize(legacy_fixture())
-        self.assertTrue(summary["outputReleaseEvidence"]["coverageEstablished"])
-        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "passed_finite_current_mac")
-        del summary["outputReleaseEvidence"]
-        self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
+    def test_old_assignment_flag_and_nil_are_readable_but_not_confirmed_release(self):
+        current = resources.summarize(fixture())
+        for text in (legacy_fixture(), fixture(output_schema=1)):
+            summary = resources.summarize(text)
+            evidence = summary["outputReleaseEvidence"]
+            self.assertEqual(evidence["semantics"], "legacy_unconfirmed_readback")
+            self.assertFalse(evidence["coverageEstablished"])
+            self.assertEqual(evidence["observedReleased"], 0)
+            self.assertEqual(evidence["legacyUnconfirmedReadback"], 32)
+            self.assertEqual(evidence["unobserved"], 32)
+            self.assertEqual(summary["metrics"], current["metrics"])
+            self.assertEqual(summary["sampledPeaks"], current["sampledPeaks"])
+            self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
+            # A cached or hand-edited true flag cannot restore the old semantics.
+            evidence["coverageEstablished"] = True
+            self.assertFalse(resources.output_release_established(summary))
+        del current["outputReleaseEvidence"]
+        self.assertEqual(resources.evaluate(current, policy())["acceptance"], "needs_investigation")
 
     def test_summary_coverage_flag_alone_cannot_admit_unobserved_or_stale_counts(self):
         for mode in ("async-cancel-after-encode", "product-states"):
@@ -186,7 +198,9 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
             summary["outputReleaseEvidence"]["coverageEstablished"] = True
             self.assertEqual(resources.evaluate(summary, policy(product=True))["acceptance"], "needs_investigation")
         for key, value in (("observations", 31), ("observedReleased", 31), ("unobserved", 1),
-                           ("notApplicable", 1), ("legacyAmbiguous", 1), ("applicable", False)):
+                           ("notApplicable", 1), ("legacyAmbiguous", 1), ("applicable", False),
+                           ("schema", 1), ("semantics", "legacy_unconfirmed_readback"),
+                           ("legacyUnconfirmedReadback", 1)):
             summary = resources.summarize(fixture())
             summary["outputReleaseEvidence"][key] = value
             self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
@@ -197,6 +211,141 @@ class SecurityResourceAcceptanceTests(unittest.TestCase):
         summary = resources.summarize(text, legacy=True)
         self.assertFalse(summary["outputReleaseEvidence"]["coverageEstablished"])
         self.assertEqual(summary["outputReleaseEvidence"]["legacyAmbiguous"], 32)
+
+    def test_current_returned_png_without_identity_readback_keeps_scalars_unknown(self):
+        for mode in ("sync", "async"):
+            observed = fixture(mode)
+            mismatch = observed.replace("outputReferenceReleased=1", "outputReferenceReleased=-1")
+            mismatch = mismatch.replace("outputWasObserved=1", "outputWasObserved=0")
+            mismatch = mismatch.replace("outputReferenceState=observed_released", "outputReferenceState=unobserved")
+            summary = resources.summarize(mismatch)
+            evidence = summary["outputReleaseEvidence"]
+            self.assertEqual(evidence["schema"], 2)
+            self.assertEqual(evidence["semantics"], "strong_fenced_weak_identity_v2")
+            self.assertEqual(evidence["observationScope"], "returned_result")
+            self.assertEqual(evidence["observedReleased"], 0)
+            self.assertEqual(evidence["unobserved"], 32)
+            self.assertEqual(evidence["legacyUnconfirmedReadback"], 0)
+            self.assertFalse(evidence["coverageEstablished"])
+            self.assertEqual(summary["metrics"], resources.summarize(observed)["metrics"])
+            self.assertEqual(resources.evaluate(summary, policy())["acceptance"], "needs_investigation")
+            with self.assertRaisesRegex(resources.EvidenceError, "output_release_not_established"):
+                resources.calibration_guard(summary, 1024*MIB)
+            # Missing PNG still fails independently of the weak observation.
+            with self.assertRaises(resources.EvidenceError):
+                resources.summarize(mismatch.replace("pngBytes=1000", "pngBytes=0", 1))
+
+    def test_old_na_rows_stay_na_but_cannot_supply_current_policy_evidence(self):
+        for mode in ("control", "product-control", "source-only"):
+            for text in (fixture(mode, output_schema=1), legacy_fixture(mode)):
+                summary = resources.summarize(text)
+                evidence = summary["outputReleaseEvidence"]
+                self.assertFalse(evidence["applicable"])
+                self.assertEqual(evidence["notApplicable"], 32)
+                self.assertEqual(evidence["semantics"], "legacy_not_applicable")
+                self.assertFalse(resources.output_release_established(summary))
+                with self.assertRaisesRegex(resources.EvidenceError, "output_release_not_established"):
+                    resources.calibration_guard(summary, 1024*MIB)
+
+    def test_old_controls_or_assignment_baselines_cannot_create_new_policy(self):
+        controls = [resources.summarize(fixture("control")) for _ in range(3)]
+        current = resources.summarize(fixture("sync", 10))
+        old = resources.summarize(fixture("sync", 10, output_schema=1))
+        old_controls = [resources.summarize(fixture("control", output_schema=1)) for _ in range(3)]
+        for group, baseline in ((controls, old), (old_controls, current)):
+            with self.assertRaisesRegex(resources.EvidenceError, "output_release_not_established"):
+                resources.build_policy(group, [baseline], ram_bytes=16*1024*MIB,
+                                       binary_sha="a"*64, source_id="b"*40)
+        frozen = policy()
+        self.assertEqual(frozen["outputReleaseSchema"], 2)
+        self.assertEqual(frozen["outputObservationSemantics"], "strong_fenced_weak_identity_v2")
+        self.assertEqual(frozen["thresholds"]["core"]["rss"]["E"], 8*MIB)
+        self.assertEqual(frozen["heartbeatCapNanoseconds"], 250_000_000)
+
+    def test_old_output_semantics_never_overwrites_existing_failed_verdict(self):
+        summary = resources.summarize(fixture("async", heartbeat=300_000_000, output_schema=1))
+        result = resources.evaluate(summary, policy())
+        self.assertEqual(result["acceptance"], "failed")
+        self.assertIn("main_actor_heartbeat_cap", result["violations"])
+        self.assertIn("output_release_not_established", result["unexplainedExcess"])
+
+    def test_old_policy_cannot_launch_or_be_silently_upgraded_by_rebind(self):
+        for command, cycles in (("run", 30), ("run", 60), ("run", 90), ("rebind", 30)):
+            with self.subTest(command=command, cycles=cycles), tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
+                root = Path(directory)
+                probe = root / "placeholder"; probe.write_bytes(b"fixed-test-placeholder"); probe.chmod(0o700)
+                frozen = policy(); frozen["binarySHA256"] = resources.digest(probe)
+                del frozen["outputReleaseSchema"]; del frozen["outputObservationSemantics"]
+                policy_path = root / "policy.json"; policy_path.write_text(json.dumps(frozen))
+                argv = ["fixed-runner", command, "--probe", str(probe), "--out", str(root / "out"),
+                        "--policy", str(policy_path)]
+                argv += (["--mode", "sync", "--cycles", str(cycles)] if command == "run" else ["--source-id", "b"*40])
+                output = io.StringIO()
+                with mock.patch.object(resources.sys, "argv", argv), mock.patch.object(resources, "fresh") as launch, redirect_stdout(output):
+                    code = resources.main()
+                launch.assert_not_called()
+                self.assertEqual(code, 2)
+                self.assertEqual(json.loads(output.getvalue())["reason"], "policy_output_observation_semantics_not_current")
+                self.assertFalse((root / "out" / "policy.json").exists())
+                self.assertEqual(json.loads(policy_path.read_text()), frozen)
+
+    def test_old_previous_summaries_cannot_fake_coverage_to_start_an_extension(self):
+        for mode in ("sync", "source-only"):
+            for cycles, extended, previous_cycles in ((60, False, 30), (90, False, 60), (30, True, 30)):
+                with self.subTest(mode=mode, cycles=cycles, extended=extended), tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
+                    root = Path(directory)
+                    probe = root / "placeholder"; probe.write_bytes(b"fixed-test-placeholder"); probe.chmod(0o700)
+                    frozen = policy(); frozen["binarySHA256"] = resources.digest(probe)
+                    policy_path = root / "policy.json"; policy_path.write_text(json.dumps(frozen))
+                    old = resources.summarize(fixture(mode, previous_cycles, output_schema=1))
+                    old["acceptance"] = "needs_investigation"
+                    # Reproduce an old cached true flag and release counters. Its declared
+                    # schema/semantics still do not witness the current readback contract.
+                    old["outputReleaseEvidence"].update(coverageEstablished=True, observedReleased=previous_cycles+2 if mode=="sync" else 0,
+                        unobserved=0, legacyUnconfirmedReadback=0)
+                    previous = {"policySHA256": resources.digest(policy_path), "mode": mode,
+                                "cycles": previous_cycles, "acceptance": "needs_investigation", "summaries": [old]}
+                    previous_path = root / "previous.json"; previous_path.write_text(json.dumps(previous))
+                    argv = ["fixed-runner", "run", "--probe", str(probe), "--out", str(root / "out"),
+                            "--policy", str(policy_path), "--mode", mode, "--cycles", str(cycles), "--previous", str(previous_path)]
+                    if extended:
+                        argv.append("--extended-idle")
+                    output = io.StringIO()
+                    with mock.patch.object(resources.sys, "argv", argv), mock.patch.object(resources, "fresh") as launch, redirect_stdout(output):
+                        code = resources.main()
+                    launch.assert_not_called()
+                    self.assertEqual(code, 2)
+                    self.assertEqual(json.loads(output.getvalue())["reason"], "extension_output_release_not_established")
+
+    def test_calibration_old_control_and_run_unconfirmed_readback_stop_first_child(self):
+        for command in ("calibrate", "run"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory(prefix="oneclip-resource-parser-") as directory:
+                root = Path(directory)
+                probe = root / "placeholder"; probe.write_bytes(b"fixed-test-placeholder"); probe.chmod(0o700)
+                argv = ["fixed-runner", command, "--probe", str(probe), "--out", str(root / "out")]
+                if command == "calibrate":
+                    argv += ["--workload", "standard", "--ram-bytes", str(16*1024*MIB), "--source-id", "b"*40]
+                    summary = resources.summarize(fixture("control", output_schema=1))
+                else:
+                    frozen = policy(); frozen["binarySHA256"] = resources.digest(probe)
+                    policy_path = root / "policy.json"; policy_path.write_text(json.dumps(frozen))
+                    argv += ["--policy", str(policy_path), "--mode", "sync"]
+                    text = fixture().replace("outputReferenceReleased=1", "outputReferenceReleased=-1")
+                    text = text.replace("outputWasObserved=1", "outputWasObserved=0").replace("outputReferenceState=observed_released", "outputReferenceState=unobserved")
+                    summary = resources.summarize(text)
+                output = io.StringIO()
+                with mock.patch.object(resources.sys, "argv", argv), mock.patch.object(resources, "fresh", return_value=summary) as launch, redirect_stdout(output):
+                    code = resources.main()
+                self.assertEqual(launch.call_count, 1)
+                report = json.loads(output.getvalue())
+                if command == "calibrate":
+                    self.assertEqual(code, 2)
+                    self.assertEqual(report["reason"], "calibration_output_release_not_established")
+                    self.assertFalse((root / "out" / "policy.json").exists())
+                else:
+                    self.assertEqual(code, 1)
+                    self.assertEqual(report["completedFreshTrials"], 1)
+                    self.assertEqual(report["expansionStopReason"], "output_release_not_established")
 
     def test_missing_or_negative_metrics_are_not_zero(self):
         for metric in ("rss", "physicalFootprint", "processHighWater"):

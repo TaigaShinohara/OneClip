@@ -132,7 +132,7 @@ def owned_directory(path, private=True):
 
 def regular_bytes(path, limit, *, exact_mode=None):
     path = no_symlink_chain(path)
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(descriptor)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1,
@@ -182,7 +182,7 @@ def load_tools(manifest_path, expected_manifest, expected_source):
         require(type(name) is str and type(sha) is str and HEX64.fullmatch(sha), "TOOLS_INPUTS_REJECTED")
         require(not PurePosixPath(name).is_absolute() and ".." not in PurePosixPath(name).parts,
                 "TOOLS_INPUTS_REJECTED")
-        require(re.fullmatch(r"OneClip/[A-Za-z0-9]+\.swift|Tests/(?:M4ResourceOwnershipProbe|SecurityRuntimeTrial|M4Fixture)\.swift", name),
+        require(re.fullmatch(r"OneClip/[A-Za-z0-9]+\.swift|Tests/(?:M4ResourceOwnershipProbe|SecurityRuntimeTrial|M4Fixture|OutputReferenceObservation)\.swift", name),
                 "TOOLS_INPUTS_REJECTED")
     calculated = hashlib.sha1(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     require(value.get("sourceID") == expected_source == calculated, "SOURCE_ID_MISMATCH")

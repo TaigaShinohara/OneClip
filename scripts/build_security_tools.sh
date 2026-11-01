@@ -16,6 +16,7 @@ app = Path('OneClip/OneClipApp.swift').read_text()
 assert app.count('@main\nstruct OneClipApp') == 1
 (p / 'OneClipAppForTests.swift').write_text(app.replace('@main\nstruct OneClipApp', 'struct OneClipApp'))
 inputs = sorted([*Path('OneClip').glob('*.swift'), Path('Tests/M4ResourceOwnershipProbe.swift'),
+                 Path('Tests/OutputReferenceObservation.swift'),
                  Path('Tests/SecurityRuntimeTrial.swift'), Path('Tests/M4Fixture.swift')])
 (p / 'build-inputs.json').write_text(json.dumps(
     {str(q): hashlib.sha256(q.read_bytes()).hexdigest() for q in inputs}, sort_keys=True))
@@ -41,7 +42,8 @@ xcrun swiftc -swift-version 6 -strict-concurrency=complete -O -whole-module-opti
     -D ONECLIP_RESOURCE_PRODUCT_STATES -parse-as-library \
     -module-cache-path "$ONECLIP_SECURITY_TOOLS_DIR/module-cache" \
     "${sources[@]}" "$ONECLIP_SECURITY_TOOLS_DIR/OneClipAppForTests.swift" \
-    Tests/M4ResourceOwnershipProbe.swift -o "$ONECLIP_SECURITY_TOOLS_DIR/ownership-probe"
+    Tests/OutputReferenceObservation.swift Tests/M4ResourceOwnershipProbe.swift \
+    -o "$ONECLIP_SECURITY_TOOLS_DIR/ownership-probe"
 preflight
 xcrun swiftc -swift-version 6 -strict-concurrency=complete -O -whole-module-optimization \
     -parse-as-library -module-cache-path "$ONECLIP_SECURITY_TOOLS_DIR/module-cache" \
@@ -57,6 +59,7 @@ import hashlib, json, subprocess, sys
 from pathlib import Path
 out = Path(sys.argv[1])
 inputs = sorted([*Path('OneClip').glob('*.swift'), Path('Tests/M4ResourceOwnershipProbe.swift'),
+                 Path('Tests/OutputReferenceObservation.swift'),
                  Path('Tests/SecurityRuntimeTrial.swift'), Path('Tests/M4Fixture.swift')])
 hashes = {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs}
 assert hashes == json.loads((out / 'build-inputs.json').read_text()), 'Sources changed during compilation.'
