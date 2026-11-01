@@ -661,3 +661,51 @@ writerなしFIFO・directory・symlinkを各3秒上限のPython childで検査�
 製品入力32件は引き続き`a4ac966f641b34e339ebab6fcbe458b4750a5a0d3e9a8d211a9afdee7d17bd08`です。
 資源の実測合格、CF互換性、backing、cold UI、実SCK1pxは未解決・未実証のままです。
 表示・本人OS／一般clipboard・宣言環境の再開条件、M4総合とCollection VoiceOverの保留を維持します。
+
+<a id="security-resource-migration-20261101"></a>
+## 数値不変の証拠移行と同期参照観測・資源超過（2026-11-01）
+
+対象はR09／T05・T09／D05・D16です。旧policyの数値を変更せず、current2の新しい証拠だけを結び付ける
+`resource_policy_migration.py`と有限実行用`migrate_resource_policy.py`を追加しました。
+元からあるB・E・peak・RAM・画像予算・heartbeat・取消期限・試行数・長さを型ごと保持し、旧観測を新しい版へ昇格しません。
+新しいB／E／Tは別のwitnessに記録し、全5試行が成立するまで移行policyを書かない条件です。
+
+### 実装と事前検証
+
+新しい親は、旧policyと承認manifestのhash、source ID、全source／binaryと親実装を試行の前後で照合します。
+起動は画像なしcontrol30測定×3、sync10測定、async10測定の順序に固定し、各2warmupを含みます。
+最大5 child、control各45秒／baseline各15秒、全体180秒、owned cleanup2＋2秒で、最初の失敗・未成立後に後続を起動しません。
+stdout512KiB・1行4KiB・8,192record、stderr4KiBまでの件数に制限し、未知の元出力やそのhashは保存しません。
+固定scalarのreceiptを先に保存し、資格判定の固定reasonを保持します。同じtools・policy・系列は再実行を拒否します。
+
+架空辞書・偽Popen・仮想時計等のPython全240件が成功しました。
+初回の1件失敗は、上限試験の偽プロセス生成が短いargvを扱えなかったものです。偽ハンドル生成を修正し、
+出力上限・回収条件を緩めずに再確認しました。時計逆行試験も実際に偽ハンドルを取得したことを必須にしています。初回ログは保持しました。
+実装・受信protocol・数値保持・停止条件は独立レビュー済みです。
+今回Swiftは再buildせず、前節のsource入力ID`24469fcd…`・ownership-probe`1cd2e1ca…`との全hash一致を確認して利用しました。
+
+### 有限観測の結果
+
+macOS27.2／arm64、物理RAM16GiBで実施しました。停止済みprovider weak診断、実画面・GUI・TCC・clipboard・画像保存は使っていません。
+画像なしcontrolの3 freshは条件を満たしました。RSS／footprintの観測変動幅は各98,304／114,688／114,688 bytes、
+そこから求めたEはすべて旧値と同じ8,388,608 bytesです。元のB=98,304を含む旧policyの値は書き換えていません。
+
+4件目のsyncでは2warmup＋10測定が完了し、current2の返却結果scopeで、実読戻し後のCGImage参照消滅を12件確認しました。
+この参照観測は当該Mac・当該同期合成の返却CGImageだけが対象です。provider・backing・ImageIO cache・allocator・物理解放の証拠ではありません。
+
+| syncの観測 | 値・判定 |
+| --- | --- |
+| warmup後→末尾5点中央値のRSS増分 | 49,463,296 bytes。旧E 8,388,608を超過 |
+| 同footprint増分 | 50,446,384 bytes。旧Eを超過 |
+| 10測定の最長処理 | 832,977,167 ns。派生Tは2秒で旧値と同じ |
+| sampled RSS maximum／取得したhigh-water | いずれも120,045,568 bytes。未観測の真のpeakを取得済みとはしない |
+| sampled footprint maximum | 118,243,976 bytes |
+
+親は固定reason `summary_growth_exceeds_frozen_E`で停止しました。全4 childはexit0・stderr0・終了回収確認済みです。
+5件目のasyncと30cycleの画像系列は未実施、移行policyは未作成です。再試行・基準緩和・後続拡大は行っていません。
+10測定のfirst→last増分もRSS59,801,600／footprint61,554,736 bytesでした。
+参照の消滅が確認できても、今回の未説明増加をcacheや安全な保持と断定したり、資源合格へ変えたりしません。
+
+元policyと製品入力32件、公証済み候補は不変です。旧FAIL・未実証は保持し、今回の12観測を旧ログへ遡って適用しません。
+同期baselineの資源超過、未実施async、backing・増加原因、cold UI・実SCK1px等が残るため、全体受入は未完了です。
+表示延期、本人開始のOS／一般clipboard、最低OS／Intel等の必須環境、M4総合／Collection VoiceOverの保留を維持します。
