@@ -313,7 +313,7 @@ struct M4ResourceOwnershipProbe {
         do { config = try Configuration(arguments: Array(CommandLine.arguments.dropFirst())) }
         catch { print("M4_OWNER_ABORT reason=invalid_arguments"); exit(2) }
         let sourceCount = [.control, .productControl].contains(config.mode) ? 0 : config.mode.isSingleOwner ? 1 : config.workload.dimensions.count
-        print("M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode=\(config.mode.rawValue) workload=\(config.workload.rawValue) sourceCount=\(sourceCount) board=not_exercised heartbeatSeries=2 warmupCycles=2 measuredCycles=\(config.cycles) idleTargetsSeconds=\(([UInt64(0)] + config.idleTargets).map(String.init).joined(separator: "_")) trial=\(config.trial) recoveryScope=\(config.mode.recoveryScope)")
+        print("M4_OWNER_SCOPE schema=2 synthetic=1 freshProcess=1 mode=\(config.mode.rawValue) workload=\(config.workload.rawValue) sourceCount=\(sourceCount) board=not_exercised heartbeatSeries=2 outputReleaseSchema=1 warmupCycles=2 measuredCycles=\(config.cycles) idleTargetsSeconds=\(([UInt64(0)] + config.idleTargets).map(String.init).joined(separator: "_")) trial=\(config.trial) recoveryScope=\(config.mode.recoveryScope)")
         print("M4_OWNER_LIMITS sourceProviderRelease=tracked batchRelease=weak_observation outputReferenceRelease=weak_observation PNGBackingRelease=unobserved ImageIOCaches=unobserved physicalErasure=not_claimed imageBudgetBytes=\(M0ImageLimits().maximumImageBytes) processPeakCapBytes=\(config.peakBytes) memoryAPIs=sequential_snapshots allocatorStatistics=all_zones ownProcessOnly=1")
         print("M4_OWNER_IDLE_POLICY explicitRunLoopPump=0 externalInspection=0 pressureRelief=0 forcedCollection=0 backgroundLoad=uncontrolled observationAndReportingMayAffectProcessMemory=1")
         reportMemory(phase: "baseline", series: "baseline", iteration: 0, elapsedNanoseconds: 0, value: observe())
@@ -428,11 +428,24 @@ struct M4ResourceOwnershipProbe {
         let expectedCount = noImages ? 0 : config.mode == .product ? allocation.created : config.mode.isSingleOwner ? 1 : config.workload.dimensions.count
         let cancellationMode = config.mode.isOwnerCancellation || [.renderOnly, .cancelBefore, .cancelAfter].contains(config.mode)
         let expectedSuccess = cancellationMode ? expectedCancellation && !succeeded && phases.reachedEncode : succeeded
+        // Only sync/async returned results reach WeakOwners.output. Cancellation and product
+        // internals may render images without exposing them to this weak observation. A nil
+        // never-observed reference is unknown (-1), not evidence that the render image died.
+        let outputApplicable = !noImages && config.mode != .sourceOnly
+        let outputReferenceReleased = owners.outputWasObserved ? (owners.output == nil ? 1 : 0) : -1
+        let outputObservationScope = noImages ? "not_applicable_no_images"
+            : config.mode == .sourceOnly ? "not_applicable_source_only"
+            : owners.outputWasObserved ? "returned_result" : "internal_render_unobserved"
+        let outputReferenceState = !outputApplicable ? "not_applicable"
+            : !owners.outputWasObserved ? "unobserved"
+            : owners.output == nil ? "observed_released" : "observed_retained"
+        // passed retains the source/batch/worker assertions. The parent's separate output
+        // coverage gate must remain unqualified for applicable, unobserved internal images.
         let released = owners.batch == nil && owners.output == nil
         let passed = expectedSuccess && productPassed && released && allocation.live == 0
             && allocation.created == expectedCount && allocation.released == expectedCount
             && imageBytes <= M0ImageLimits().maximumImageBytes && !phases.exceeded
-        print("M4_OWNER_OWNERSHIP series=\(series) iteration=\(iteration) compositionSucceeded=\(succeeded ? 1 : 0) expectedCancellation=\(expectedCancellation ? 1 : 0) batchOwnerReleased=\(owners.batch == nil ? 1 : 0) outputReferenceReleased=\(owners.output == nil ? 1 : 0) outputWasObserved=\(owners.outputWasObserved ? 1 : 0) sourceLiveBytes=\(allocation.live) sourceCreated=\(allocation.created) sourceReleased=\(allocation.released) pngBytes=\(pngBytes) actualImageBytes=\(imageBytes) peakCapExceeded=\(phases.exceeded ? 1 : 0) elapsedNanoseconds=\(elapsed) recoveryNanoseconds=\(recoveryNanoseconds) passed=\(passed ? 1 : 0)")
+        print("M4_OWNER_OWNERSHIP series=\(series) iteration=\(iteration) compositionSucceeded=\(succeeded ? 1 : 0) expectedCancellation=\(expectedCancellation ? 1 : 0) batchOwnerReleased=\(owners.batch == nil ? 1 : 0) outputReferenceReleased=\(outputReferenceReleased) outputWasObserved=\(owners.outputWasObserved ? 1 : 0) outputObservationScope=\(outputObservationScope) outputReferenceState=\(outputReferenceState) sourceLiveBytes=\(allocation.live) sourceCreated=\(allocation.created) sourceReleased=\(allocation.released) pngBytes=\(pngBytes) actualImageBytes=\(imageBytes) peakCapExceeded=\(phases.exceeded ? 1 : 0) elapsedNanoseconds=\(elapsed) recoveryNanoseconds=\(recoveryNanoseconds) passed=\(passed ? 1 : 0)")
         for sample in phases.samples { reportMemory(phase: sample.phase, series: series, iteration: iteration, elapsedNanoseconds: sample.elapsed, value: sample.memory) }
         reportMemory(phase: "scope_released", series: series, iteration: iteration, elapsedNanoseconds: elapsed, value: memory)
         return passed
