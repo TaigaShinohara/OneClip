@@ -129,6 +129,39 @@ weak代入後の正対照は、weak登録そのものの互換性検査にはな
 `backingRelease=not_observed`、資源集計`NOT_EXERCISED`、`resourceAcceptance=false`を維持します。
 代替の所有buffer／release callbackは別設計であり、現在rendererの証明や局所修正の採用結果として扱いません。
 
+### 明示所有bufferの寿命計測器
+
+`OwnedBackingLifetimeProbe`は、64×64の架空RGBA buffer（16,384 bytes）を自分で確保する独立診断です。
+製品の`CGContext(data:nil) → makeImage()`は変更しません。`makeImage()`はcopy／copy-on-writeになり得るため、
+contextの解放だけを返却画像の画素解放と同一視しません。
+[Appleのsnapshot仕様](https://developer.apple.com/documentation/coregraphics/cgcontext/makeimage%28%29?language=objc)と
+[明示providerのAPI](https://developer.apple.com/documentation/coregraphics/cgdataprovider/init%28datainfo%3Adata%3Asize%3Areleasedata%3A%29)を根拠にします。
+
+| 固定arm | 保持と観測 |
+| --- | --- |
+| `provider_hold` | caller bufferのproviderをstrong保持し、保持中callback0／live1、終了後callback1／解放1／live0 |
+| `image_hold` | 描画contextのrelease callbackを観測した後、同じbufferのproviderからCGImageを作り、画像のstrong保持中と解放後を比較 |
+| `png_encode` | 同じ所有経路にメモリ内PNG生成を加える。成功PNGは最大65,536 bytes、画像fileは書かない |
+
+callback tokenは最大5個だけ保持し、各leaseはbufferを一度だけ手放します。消費後tokenはbufferを保持しません。
+trackerはlockでscalarだけを更新し、画像・provider・bufferを保持しません。CF型のweak参照やsnapshotは使用しません。
+contextのcallbackが未観測ならproviderを作らず、最初の未成立で後続armを停止します。
+
+新しいbuild入口はbuildだけを行い、自動実行しません。source8入力とbinaryをhashで固定し、compiler版・SDKパス・flagsを
+manifestへ記録します。新しい親がsource・manifest・binaryを実行前後に照合します。SDK内容全体のhashではありません。
+1 fresh child・固定3 arms・再試行なし、各arm2秒／native全体8秒です。
+同期framework内部の停止は親が担当し、child最大10秒・親全体14秒、所有handleだけをterminate2秒／kill2秒で回収します。
+起動前の残時間からcleanup4秒分を引くため、childの実deadlineは10秒以下です。
+排他的な系列予約はoutputやbinaryとは別のprivate directoryへ保存し、同じ予約先での再build・output変更でも再走しません。
+
+stdout16KiB・1行2KiB・最大3 JSON records・stderr1KiBまでに制限します。未知field・型・順序・重複key・途中行・
+保持中の早期callback・終了後の残留を拒否します。receiptは固定scalarだけで、raw出力・元エラー・未知出力のhashを保存しません。
+期限超過のelapsedも丸めず保持し、正対照の成立だけを`OBSERVED`とします。
+
+この計測器の成立は、現rendererのbacking、既存メモリ増加の原因、ImageIO cache／allocator、RSS／footprintの合格、
+物理消去、製品の取消・回復の証拠ではありません。`resourceAcceptance=false`を常に保持し、旧policy・既存FAILを変更しません。
+撤回済みprovider weak pilotと、資源超過で終了した移行系列の実行入口を再利用しません。
+
 ## 本人開始式の実OS試験
 
 `SecurityRuntimeTrial`は専用の試験実行物です。通常起動/`--help`/`--self-test`ではOS操作やboardに触れません。
