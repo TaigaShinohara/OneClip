@@ -493,3 +493,69 @@ malloc使用量の末尾5点中央値は546,800 bytes、malloc確保量は25,165
 待機後の低下、今回の小さいheartbeat値、以前より小さい増分を、資源合格やcold UI問題の解消へ転用しません。
 元のE／peak／取消期限・画像予算は変更せず、この有限系列を終了しました。
 通常アプリ、実SCK・表示・一般クリップボード・OS遷移は未実施で、対応宣言全体の受入も未完了です。
+
+<a id="security-output-evidence-20261101"></a>
+## 未観測の出力を合格させない判定とSDK設定の切分け（2026-11-01）
+
+対象はR08・R09／T05・T09／D02・D05・D16の観測・受入条件です。製品コードと公証済み候補は変更していません。
+
+### 出力解放の観測範囲を訂正
+
+従来のProbeは、結果が返る前に取消した場合も、代入されていないweak参照のnilから`outputReferenceReleased=1`を出力していました。
+この値は、render後のCGImageを一度観測してから解放を確認した証拠ではありません。
+旧countとVM付きcountの各32記録は、すべて`outputWasObserved=0`でした。
+従来の`passed=1`が確認したsource provider・batch・workerの不変条件と、内部render画像の解放証拠を分けます。
+
+新しい`outputReleaseSchema=1`では、解放済み1／保持中0／未観測-1を記録し、返却結果・内部render未観測・画像なし・source-onlyを固定scope/stateで区別します。
+未観測の適用対象は`needs_investigation`とし、校正に使いません。矛盾したstate、保持中、欠落・混在field、scopeずれは拒否します。
+旧ログのscalarは読み取れますが、観測不足をlegacy ambiguityとして保持し、古いsummaryのcoverage欠落も合格へ置き換えません。
+観測済みCGImageの消滅も、provider backing・allocator・物理消去の証明ではありません。
+
+CLIは未観測の適用対象で最初のfresh processを終えた後、次のprocessへ拡大しません。
+60／90cycle・extended idleへ進む前にも、前回summaryの版・mode・件数・観測範囲を検査し、欠測や未観測を理由に延長しません。
+既存の明確なFAILを優先し、E／peak／取消期限は維持します。
+
+両旧ログを独立再集計したRSS／footprint増分は209,420,288／217,202,856 bytesおよび146,210,816／144,195,704 bytesで不変です。
+各32件を内部出力未観測として再分類し、従来のメモリ未合格も保持します。
+Python全139件が成功しました。新しい判定・CLIの39件には、未知をtrue flagだけで合格させないこと、初回停止、延長前の起動ゼロを含みます。
+
+Core専用の実出力確認では、画像なしと小画像の同期処理で各2warmup＋10測定が成立し、対象外-1と観測済み解放1を確認しました。
+同期処理の素材生成・解放は24／24です。この小さな確認から資源全体の合格は判定しません。
+小画像の取消処理はchild exit0・回収・stderr0でしたが、親の集計は`EvidenceError`となり`NOT_ESTABLISHED`で停止しました。
+この試行の具体的な固定reasonと元stdoutは保存されていないため、原因を断定せず、再試行で補完していません。
+
+### 実SDK設定オブジェクトの非撮影確認
+
+`--configuration-contract`をGUI系入口より前に追加しました。単独引数だけを許可し、混在引数はcapture経路へ入る前に拒否します。
+独立した固定座標14件で、実`SCStreamConfiguration`の`sourceRect`／width／heightのsetter-readbackを確認しました。
+1x／2x、1pxの四隅、2xの0.5pt原点4通り、負座標、非正方形を含み、不正finite値・範囲外・ゼロ面積・非整列・倍率不一致21件も拒否しました。
+初回は親の倍率ラベルの型指定が誤っていたため未成立として保持し、固定文字列の定義と拒否7条件を確認した親で一度だけ再確認しました。
+修正後は14正例・21拒否例と混在引数の停止が成功しています。
+
+入力IDは`143fa553440baed4e03dd640c112fb8fdc657d07`、
+実行物SHA-256は`a4a080e81aca1cc2cb3feaf8f0527d27a4b1252ee146d56262e5ea12e8e46745`です。
+この結果は当該SDK設定に0.5ptや1pxが保持された確認で、実filterのcontentRect・SCK sampling・画素結果の成功ではありません。
+実取得の原点を推測で補正せず、範囲外や別画面への代替取得も追加していません。1pxの実SCK FAILは未解決です。
+
+### typed malloc列挙の成立前停止
+
+公開仕様では[`malloc_zone_statistics(NULL)`は全zoneの合算](https://github.com/apple-oss-distributions/libmalloc/blob/main/include/malloc/malloc.h)です。
+[公開allocator実装のfree後cacheとlive統計](https://github.com/apple-oss-distributions/libmalloc/blob/main/src/magazine_malloc.c)の分離から、小さいmalloc統計と大きいVM領域は両立し得ます。
+これを当該実行の原因確定にはせず、使用中rangeを数値列挙する画像なしの一時pilotを準備しました。
+callbackの無割当て、statisticsを外部zone lockの外で呼ぶこと、既知のzone/versionの事前検査を要求しました。
+自前16MiBは、単一rangeが全域を包含することを正対照とし、重複した半分で穴を隠す条件も拒否します。
+
+通常版・ASAN／UBSan版の各17自己試験、親の正常1／拒否8条件は成功しました。
+実APIは1 fresh processの最初のsnapshotで、登録zoneのversion／名称の事前条件が成立せず、reason2・`NOT_ESTABLISHED`で停止しました。
+登録数2・列挙済み0・callback0、reader3回／28 bytes、child exit2・stderr0・回収を確認しました。
+min/max version16は検査済みprefixの部分値です。range・statisticsの0は未取得の初期値で、実メモリゼロを意味しません。
+16MiBの割当て、statistics、force-lock、typed列挙へは到達していません。
+
+C source SHA-256は`f2d30b6086879abe9f97659b870707107f08991397e6091cc1e3d1953436ecdb`、
+通常実行物は`0b5fa8cbbceb96dca576711d1e4228599883657472367b9e9020d0ae74c23af4`です。
+未知のzoneのidentityやraw文字列は保存せず、許可範囲の拡張・再試行・画像処理への組込みは行いません。
+この診断器のversion制限を、製品のmacOS 14以降／Intelの対応範囲縮小には使いません。
+
+冷間UIの既存861ms／254msはCollectionPanelのhostingを含む記録で、ResultView固有の原因とは特定できません。
+通常アプリとCLI初回hostingの費用は未分離です。今回、表示やmaterialを推測で変更せず、既存のcold UI FAILを保持しました。
+実表示・実SCK・一般クリップボード・OS遷移は未実施で、全体受入とM4総合・Collection VoiceOverの状態は変わりません。
