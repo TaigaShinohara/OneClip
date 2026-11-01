@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Private temporary files, fake clocks and fake child processes only. Never launches an app."""
+"""Private temporary files, fake processes and bounded source-only Python checks. Never launches an app."""
 import contextlib
 import copy
 import hashlib
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -535,8 +537,92 @@ class SecurityTrialRunnerTests(unittest.TestCase):
         with runner.Ledger(self.directory) as ledger:
             self.reject(ledger.tools, "MANIFEST_HASH_MISMATCH")
 
+    def test_tools_manifest_accepts_exact_readback_helper_and_keeps_old_inputs_valid(self):
+        with mock.patch.object(runner.subprocess, "Popen") as launch:
+            old = runner.load_tools(self.manifest, self.manifest_hash, self.source)
+            self.assertEqual(old["source_id"], self.source)
+            value = json.loads(self.manifest.read_text())
+            value["inputs"]["Tests/OutputReferenceObservation.swift"] = "c" * 64
+            source = hashlib.sha1(json.dumps(value["inputs"], sort_keys=True).encode()).hexdigest()
+            value["sourceID"] = source
+            self.manifest.write_text(json.dumps(value))
+            approved_manifest = runner.digest(self.manifest.read_bytes())
+            current = runner.load_tools(self.manifest, approved_manifest, source)
+            self.assertEqual(current["source_id"], source)
+            self.assertNotEqual(current["source_id"], old["source_id"])
+            launch.assert_not_called()
+
+    def test_tools_manifest_still_refuses_other_test_sources_and_helper_lookalikes(self):
+        original = json.loads(self.manifest.read_text())
+        for name in ("Tests/Unknown.swift", "Tests/OutputReferenceObservationTests.swift",
+                     "Tests/OutputReferenceObservation.swift.extra", "Tests/subdir/OutputReferenceObservation.swift",
+                     "Tests/../OutputReferenceObservation.swift"):
+            with self.subTest(name=name), mock.patch.object(runner.subprocess, "Popen") as launch:
+                value = copy.deepcopy(original)
+                value["inputs"][name] = "c" * 64
+                source = hashlib.sha1(json.dumps(value["inputs"], sort_keys=True).encode()).hexdigest()
+                value["sourceID"] = source
+                self.manifest.write_text(json.dumps(value))
+                approved_manifest = runner.digest(self.manifest.read_bytes())
+                self.reject(lambda: runner.load_tools(self.manifest, approved_manifest, source), "TOOLS_INPUTS_REJECTED")
+                launch.assert_not_called()
+
     def test_wrong_source_id_is_rejected(self):
         self.reject(lambda: runner.load_tools(self.manifest, self.manifest_hash, "0" * 40), "SOURCE_ID_MISMATCH")
+
+    def test_nonregular_inputs_are_refused_without_read_or_runtime_launch_in_bounded_children(self):
+        fifo = self.root / "source-only-fifo"
+        os.mkfifo(fifo, 0o600)  # Deliberately no writer: a blocking open cannot complete.
+        directory = self.root / "source-only-directory"; directory.mkdir(mode=0o700)
+        link = self.root / "source-only-link"; link.symlink_to(self.manifest)
+        child = r'''
+import errno, importlib.util, os, sys
+from pathlib import Path
+from unittest import mock
+spec = importlib.util.spec_from_file_location("source_only_trial_runner", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+opened = []
+real_open = os.open
+def observe_open(*args, **kwargs):
+    descriptor = real_open(*args, **kwargs)
+    opened.append(descriptor)
+    return descriptor
+with mock.patch.object(module.subprocess, "Popen", side_effect=AssertionError("runtime_launch_forbidden")) as launch:
+    with mock.patch.object(module.os, "open", side_effect=observe_open):
+        with mock.patch.object(module.os, "read", side_effect=AssertionError("nonregular_read_forbidden")) as read:
+            try:
+                module.regular_bytes(Path(sys.argv[2]), 256)
+            except module.Rejected as error:
+                if str(error) != sys.argv[3]:
+                    raise SystemExit("wrong_fixed_rejection")
+            else:
+                raise SystemExit("nonregular_input_accepted")
+            read.assert_not_called()
+    launch.assert_not_called()
+expected_opened = 0 if sys.argv[3] == "SYMLINK_REJECTED" else 1
+if len(opened) != expected_opened:
+    raise SystemExit("unexpected_descriptor_count")
+for descriptor in opened:
+    try:
+        os.fstat(descriptor)
+    except OSError as error:
+        if error.errno != errno.EBADF:
+            raise SystemExit("descriptor_state_unknown")
+    else:
+        raise SystemExit("descriptor_not_closed")
+print(sys.argv[3])
+'''
+        for path, reason in ((fifo, "OWNED_REGULAR_FILE_REQUIRED"),
+                             (directory, "OWNED_REGULAR_FILE_REQUIRED"), (link, "SYMLINK_REJECTED")):
+            with self.subTest(kind=path.name):
+                result = subprocess.run([sys.executable, "-I", "-B", "-c", child, str(MODULE), str(path), reason],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    env={"PATH": os.defpath, "LANG": "C", "TMPDIR": tempfile.gettempdir()},
+                    timeout=3, check=False)
+                self.assertEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, (reason + "\n").encode("ascii"))
+                self.assertEqual(result.stderr, b"")
 
     def test_symlink_and_corrupt_state_are_rejected(self):
         original = (self.directory / "state.json").read_bytes()

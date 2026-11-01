@@ -77,11 +77,16 @@ fixture比較はRGB許容差とalpha255の厳密条件を分け、読取り不�
 
 欠測・途中終了・PNGの取消後返却・owner残留・slot早期解放は成功にしません。
 出力参照は観測済み解放1／保持0／未観測-1と、返却結果・内部render・対象外のscopeを分けます。
+`outputReleaseSchema=2`だけが、強参照の寿命を維持した区間でweak参照を読み戻し、同じ画像だったことを確認した形式です。
+PNGの返却とweak参照の成立は別です。返却結果があっても読戻しがnil／別参照なら、解放-1・未観測を保持します。
+旧schema1はweak代入の試行しか証明せず、scalarは読めても解放coverageへ使いません。旧summaryの合格flagだけでも復活させません。
 旧ログのnil=1を未観測renderの解放証拠にせず、coverage欠測・未観測の適用対象は校正／合格に使いません。
 その場合は初回fresh processで拡大を停止し、60／90cycle・extended idleの起動前にも前回coverageを要求します。
 60/90cycle・idle60/120秒への延長は、同条件の調査結果がある場合だけです。
 後の安定したfresh processで前の超過を自動的に合格へ変えません。
 局所修正後の`rebind`は元の閾値を保持し、再校正で上限を緩めません。
+観測の意味が古いpolicyはrun／rebindの起動前に拒否します。再開には元の数値を保持した証拠移行の設計が必要で、
+新しいschema名を付けるだけで旧試行や旧policyを現在の観測へ昇格しません。
 画面外の実View生成・所有を、実際のdraw・窓表示・VoiceOverの証拠にしません。
 warmup/measured別のheartbeatは切分け用です。cold warmupを含むaggregateの不合格を除外しません。
 初回期限はstartから50msに固定し、Task entryの遅れへさらに50msを加えません。未callbackの終了tailも計上します。
@@ -90,40 +95,20 @@ handle未取得や回収確認不能は成功にせず、以後の試行を止�
 
 ### 内部renderオブジェクトの限定観測
 
-以下はopt-inの実験用診断です。当該Macの初回実行は子の異常終了で`NOT_ESTABLISHED`となり、
-実オブジェクト寿命の証拠は得られていません。[実行記録](M4-VERIFICATION.md#security-render-observation-20261101)を参照してください。
+現在、この診断のbuild／実行入口は停止しています。両scriptは`observer_withdrawn`、`NOT_ESTABLISHED`、
+画像処理のchild起動0を返し、入力の読取り・出力作成・compiler検索・起動予約へ進みません。
+当該Macでの初回異常終了と未成立は[実行記録](M4-VERIFICATION.md#security-render-observation-20261101)へ保持し、再試行しません。
 
-`scripts/prepare_resource_observation.py`は、元のCoreのrender後・encode前という一意の境界に観測を1行挿入した試験用コピーを、
-新しいOS一時directoryへ作ります。元ソースのSHA-256、正確な差分、派生コピーのSHA-256を記録し、製品ソースを変更しません。
-境界の不一致・重複、FIFO・symlink・既存出力を拒否します。通常rendererの`CGContext(data: nil)`は維持します。
+weak代入後の正対照は、weak登録そのものの互換性検査にはなりません。
+[ClangのARC仕様](https://clang.llvm.org/docs/AutomaticReferenceCounting.html#weak-unavailable-types)はweakをサポートしないObjCクラスを許しており、
+[Apple runtimeの登録処理](https://github.com/apple-oss-distributions/objc4/blob/main/runtime/objc-weak.mm)には拒否・異常終了の分岐があります。
+これらの公開実装を、今回の終了原因や特定のCGImage／providerの非対応を確定した証拠にはしません。
+確認した公開SDKには、任意のproviderの非trapなweak対応を事前判定する利用可能なAPIを見つけていません。
 
-`scripts/build_render_ownership_tools.sh`はこのコピーと`Tests/M4RenderOwnershipPilot.swift`をbuildするだけです。
-`scripts/run_render_ownership_pilot.py`はmanifestと元入力・派生入力・実行物の対応を検査してから、1 fresh processを実行待ち期限15秒で1回起動します。
-終了・回収には別途terminate後2秒、kill後2秒の有限期限を設けます。期限超過・回収不明は成立にしません。
-素材は架空64×64の2枚だけで、正対照・通常成功・encode前の実Task取消・encode後の実Task取消を各1回に固定します。
-最初の未成立で後続を停止し、親も自分の子だけを有限時間で回収します。実撮影・GUI・pasteboard・画像保存は行いません。
-
-正対照は、実renderのCGImageとそのproviderを一度生存・同一性確認した後、明示strong保持とproviderだけの保持を確認します。
-providerだけを明示保持する段階では、CGImageの生存は0／1の両方を許容し、providerからの間接保持を違反にしません。
-すべてのTask・返却結果・明示strong保持のscopeを抜けてから、型付きweak参照が両方nilになったことを調べます。
-取消では、停止中の両オブジェクトの生存、実Task取消、元wrapperによる実workerのawait、PNGの不返却も必要です。
-未観測は-1とし、最初からnilだった値を解放済みへ置き換えません。
-
-親のreceiverは固定protocol・enum・数値だけを再構成し、未知のstdout・stderr・error文を保存しません。
-画像寿命のreceiptを先に保存し、任意の資源集計は別receiptにするため、集計の欠測で既取得の観測まで失いません。
-この専用pilotの資源集計は`NOT_EXERCISED`で、`resourceAcceptance=false`を維持します。
-仮にpilotが成立しても、確認できるのは当該小画像・当該processのCFオブジェクト寿命だけです。provider backing・ImageIO cache・allocator・RSS／footprint・物理消去、
-製品coordinatorの共有枠、全workloadや実UIの保持は未証明であり、旧ログのcoverageや既存の資源FAILへ遡って適用しません。
-
-開発者が別途診断条件を定める場合のbuild／実行入口は次のとおりです。新しい出力先が必要で、同じbuildの再起動は拒否します。
-buildだけでは実行せず、この手順を既存の未成立試行を上書きする再試行手順には使いません。
-
-```sh
-bash scripts/build_render_ownership_tools.sh --output-dir "$TMPDIR/oneclip-render-tools-new"
-python3 -B scripts/run_render_ownership_pilot.py \
-  --tools-dir "$TMPDIR/oneclip-render-tools-new" \
-  --output-dir "$TMPDIR/oneclip-render-result-new"
-```
+旧Swift source・receipt・固定protocolのreceiverは経緯と回帰確認用に残し、通常の診断・CI・資源受入へ組み込みません。
+ソース準備scriptもコピーを作るだけです。provider backing・ImageIO cache・allocator・RSS／footprint・物理消去は未証明です。
+`backingRelease=not_observed`、資源集計`NOT_EXERCISED`、`resourceAcceptance=false`を維持します。
+代替の所有buffer／release callbackは別設計であり、現在rendererの証明や局所修正の採用結果として扱いません。
 
 ## 本人開始式の実OS試験
 
