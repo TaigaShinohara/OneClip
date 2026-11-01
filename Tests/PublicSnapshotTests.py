@@ -62,6 +62,50 @@ class PublicSnapshotTests(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
 
+    def test_approved_project_email_is_preserved_in_new_snapshot(self):
+        email = "deeple+oneclipstaff@inkboxmail.com"
+        self.git("config", "user.email", email)
+        self.commit("# Public project contact fixture\n")
+        self.prepare()
+        self.assertEqual(snapshot.git(self.output, "log", "-1", "--format=%ae").decode().strip(), email)
+
+    def test_public_email_policy_requires_exact_project_address_or_github_noreply(self):
+        accepted = (
+            "deeple+oneclipstaff@inkboxmail.com",
+            "12345+synthetic@users.noreply.github.com",
+            "noreply@github.com",
+        )
+        rejected = (
+            "other@inkboxmail.com",
+            "deeple@inkboxmail.com",
+            "deeple+other@inkboxmail.com",
+            "deeple+oneclipstaff+other@inkboxmail.com",
+            "Deeple+oneclipstaff@inkboxmail.com",
+            "deeple+oneclipstaff@Inkboxmail.com",
+            " deeple+oneclipstaff@inkboxmail.com",
+            "deeple+oneclipstaff@inkboxmail.com ",
+            "synthetic@users.noreply.github.com.example.test",
+            "synthetic@example.test",
+        )
+        for email in accepted:
+            with self.subTest(accepted=accepted.index(email)):
+                self.assertTrue(snapshot.is_approved_public_author_email(email))
+        for email in rejected:
+            with self.subTest(rejected=rejected.index(email)):
+                self.assertFalse(snapshot.is_approved_public_author_email(email))
+
+    def test_unapproved_author_email_stops_snapshot_without_echo(self):
+        email = "synthetic" + "@example.test"
+        self.git("config", "user.email", email)
+        self.commit("# Public fixture\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            with self.assertRaises(snapshot.PreparationError) as caught:
+                snapshot.prepare(self.source, self.output)
+        self.assertNotIn(email, str(caught.exception))
+        self.assertNotIn(email, output.getvalue())
+        self.assertFalse(self.output.exists())
+
     def test_private_metadata_is_rejected_without_echoing_values(self):
         fixtures = (
             "/" + "Users/" + "synthetic/private-workspace",

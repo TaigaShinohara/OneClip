@@ -32,8 +32,11 @@ struct CaptureAnnotationEditorView: View {
             OneClipBadge(systemName: "pencil.tip.crop.circle", tone: .single, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 Text("画像に注釈").font(.title3.bold())
-                Text("矢印やコメントで、伝えたい箇所を示せます。原本はそのまま残ります。")
+                Text("矢印やコメントで、伝えたい箇所を示せます。")
                     .font(.callout).foregroundStyle(.secondary)
+                Text("原本は残ります。コメントや囲みで、写った機密情報を隠すことはできません。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }

@@ -190,11 +190,17 @@ private struct CaptureSettingsView: View {
                         .buttonStyle(.borderless)
                         .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
                         .padding(.horizontal, 4).padding(.bottom, 16)
+                    Text("撮影画像はこのMacに自動保存し、保存期限はありません。")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 4).padding(.bottom, 10)
+                    CaptureDataNotice(isActionDisabled: recording || candidate != nil || keys.settingsInteractionBlocked)
+                        .padding(.horizontal, 4).padding(.bottom, 16)
                     DisclosureGroup("キーの使い方", isExpanded: $showsHelp) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("⌃ Control・⌥ Option・⌘ Commandのいずれかと、文字や数字などを組み合わせます。2つの撮影には別のキーを設定します。")
                             Text("ほかのアプリと重なる場合は、別の組み合わせを試してください。反応しない場合はシステム設定のショートカットも確認できます。すべての重複は自動検出できません。")
-                            Text("キーは物理的な位置で保存します。撮影した画像はこのMacに自動保存します。選択範囲・セッションは保存しません。")
+                            Text("キーは物理的な位置で保存します。")
                         }
                         .font(.callout).foregroundStyle(.secondary).lineSpacing(3)
                         .fixedSize(horizontal: false, vertical: true).padding(.top, 10)

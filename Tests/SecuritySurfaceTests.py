@@ -118,6 +118,53 @@ class SecuritySurfaceTests(unittest.TestCase):
                             for item in report["repository"]["findings"]))
         self.assertNotIn(email, json.dumps(report))
 
+    def test_exact_public_project_email_is_allowed_without_echo(self):
+        email = "deeple+oneclipstaff@inkboxmail.com"
+        self.command("config", "user.email", email)
+        tip = self.commit("# Public project contact fixture\n")
+        report = self.audit(tip)
+        self.assertEqual(report["status"], "passed_selected_scope")
+        self.assertEqual(report["repository"]["findings"], [])
+        self.assertNotIn(email, json.dumps(report))
+
+    def test_similar_project_addresses_remain_unapproved_without_echo(self):
+        addresses = (
+            "other@inkboxmail.com",
+            "deeple@inkboxmail.com",
+            "deeple+other@inkboxmail.com",
+            "deeple+oneclipstaff+other@inkboxmail.com",
+            "Deeple+oneclipstaff@inkboxmail.com",
+            "deeple+oneclipstaff@Inkboxmail.com",
+        )
+        for index, email in enumerate(addresses):
+            with self.subTest(address=index):
+                self.command("config", "user.email", email)
+                tip = self.commit(f"# Unapproved public email fixture {index}\n")
+                report = self.audit(tip)
+                self.assertEqual(report["status"], "findings_require_review")
+                locations = {item["location"] for item in report["repository"]["findings"]
+                             if item["commit"] == tip and item["category"] == "non_noreply_author_email"}
+                self.assertEqual(locations, {"author", "committer"})
+                self.assertNotIn(email, json.dumps(report))
+
+    def test_github_generated_noreply_metadata_remains_allowed(self):
+        self.command("config", "user.name", "GitHub")
+        self.command("config", "user.email", "noreply@github.com")
+        tip = self.commit("# GitHub metadata fixture\n")
+        self.assertEqual(self.audit(tip)["status"], "passed_selected_scope")
+
+    def test_project_email_exception_does_not_allow_unknown_author_names_or_secrets(self):
+        self.command("config", "user.name", "Synthetic Unapproved Contributor")
+        self.command("config", "user.email", "deeple+oneclipstaff@inkboxmail.com")
+        value = "gh" + "p_" + "C" * 35
+        tip = self.commit(value)
+        report = self.audit(tip)
+        categories = {item["category"] for item in report["repository"]["findings"]}
+        self.assertIn("unapproved_public_author_name", categories)
+        self.assertIn("GitHub token", categories)
+        self.assertNotIn("non_noreply_author_email", categories)
+        self.assertNotIn(value, json.dumps(report))
+
     def test_promisor_store_cannot_trigger_lazy_network_object_fetch(self):
         tip = self.commit("# Public\n")
         self.command("config", "remote.origin.promisor", "true")
