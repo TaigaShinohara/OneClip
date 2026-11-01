@@ -57,6 +57,8 @@ python3 -B -m unittest discover -s Tests -p '*Tests.py' -v
 これらの成功も、実SCKの1px境界の正しさを代替しません。
 fixture比較はRGB許容差とalpha255の厳密条件を分け、読取り不成立を透明・palette一致へ変換しません。
 各取得前後・current確認・画素観測後の成立条件を検査し、一度失敗した同じ試行は再開しません。
+`--configuration-contract`は実SDK設定オブジェクトのsourceRect／出力寸法の読戻しと、架空座標の拒否条件だけを確認します。
+0.5pt／1pxの保持は実SCKのsamplingや画素境界の証明ではありません。単独引数だけを許可し、GUI・capture経路へ入りません。
 
 ## 有限資源判定
 
@@ -74,6 +76,9 @@ fixture比較はRGB許容差とalpha255の厳密条件を分け、読取り不�
 - 取消回復はcoordinator要求から実worker返却・slot解放まで。M0 wrapper単独の計測とは別系列にする。
 
 欠測・途中終了・PNGの取消後返却・owner残留・slot早期解放は成功にしません。
+出力参照は観測済み解放1／保持0／未観測-1と、返却結果・内部render・対象外のscopeを分けます。
+旧ログのnil=1を未観測renderの解放証拠にせず、coverage欠測・未観測の適用対象は校正／合格に使いません。
+その場合は初回fresh processで拡大を停止し、60／90cycle・extended idleの起動前にも前回coverageを要求します。
 60/90cycle・idle60/120秒への延長は、同条件の調査結果がある場合だけです。
 後の安定したfresh processで前の超過を自動的に合格へ変えません。
 局所修正後の`rebind`は元の閾値を保持し、再校正で上限を緩めません。

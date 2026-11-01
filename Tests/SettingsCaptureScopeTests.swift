@@ -11,6 +11,7 @@ import ScreenCaptureKit
 /// --grid-oracle-padded checks the same grid inside a 16pt opaque synthetic margin, offscreen only.
 /// --capture-grid-padded is a separate explicit SCK ablation; it never replaces --capture-grid.
 /// --sampling-oracle checks synthetic normalization/provider-alpha logic, with no OS capture.
+/// --configuration-contract reads real SDK configuration setters using synthetic geometry only.
 /// --capture-sampling[-origins] explicitly compares only a flat opaque synthetic fixture region.
 /// No mode requests permission, accesses the clipboard, or delivers input to other apps.
 @main
@@ -20,6 +21,15 @@ struct SettingsCaptureScopeTests {
 
     @MainActor
     static func main() async throws {
+        if CommandLine.arguments.contains("--configuration-contract") {
+            guard Array(CommandLine.arguments.dropFirst()) == ["--configuration-contract"] else {
+                print("FAIL CONFIGURATION-CONTRACT: invalid_mode_combination"); exit(2)
+            }
+            do { try testConfigurationContract() }
+            catch let failure as Failure { print("FAIL CONFIGURATION-CONTRACT: \(failure.description)"); exit(1) }
+            catch { print("FAIL CONFIGURATION-CONTRACT: synthetic_configuration_rejected"); exit(1) }
+            return
+        }
         let oracleModes = ["--grid-oracle", "--grid-oracle-padded", "--sampling-oracle"]
         if CommandLine.arguments.contains(where: { oracleModes.contains($0) }) {
             let arguments = Array(CommandLine.arguments.dropFirst())
@@ -101,6 +111,138 @@ struct SettingsCaptureScopeTests {
 
     static func expect(_ value: @autoclosure () -> Bool, _ message: String) throws {
         guard value() else { throw Failure(description: message) }
+    }
+
+    /// These expected display-local, top-left rectangles are independent fixed vectors,
+    /// not another implementation of RegionGeometry's conversion formula. The actual SDK
+    /// configuration is exercised without a filter, shareable content, stream or screenshot.
+    struct ConfigurationVector {
+        let scale: CGFloat
+        let displayFrame: CGRect
+        let selection: CGRect
+        let source: CGRect
+        let width: Int
+        let height: Int
+    }
+
+    @MainActor
+    static func testConfigurationContract() throws {
+        let frame = CGRect(x: -320, y: 100, width: 160, height: 100)
+        let otherFrame = CGRect(x: 40, y: -200, width: 160, height: 100)
+        // Eight one-pixel corner requests, four origin phases at 2x, and two
+        // nonsquare requests on a differently positioned synthetic display.
+        let vectors: [ConfigurationVector] = [
+            .init(scale: 1, displayFrame: frame,
+                  selection: CGRect(x: -320, y: 199, width: 1, height: 1),
+                  source: CGRect(x: 0, y: 0, width: 1, height: 1), width: 1, height: 1),
+            .init(scale: 1, displayFrame: frame,
+                  selection: CGRect(x: -161, y: 199, width: 1, height: 1),
+                  source: CGRect(x: 159, y: 0, width: 1, height: 1), width: 1, height: 1),
+            .init(scale: 1, displayFrame: frame,
+                  selection: CGRect(x: -320, y: 100, width: 1, height: 1),
+                  source: CGRect(x: 0, y: 99, width: 1, height: 1), width: 1, height: 1),
+            .init(scale: 1, displayFrame: frame,
+                  selection: CGRect(x: -161, y: 100, width: 1, height: 1),
+                  source: CGRect(x: 159, y: 99, width: 1, height: 1), width: 1, height: 1),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -320, y: 199.5, width: 0.5, height: 0.5),
+                  source: CGRect(x: 0, y: 0, width: 0.5, height: 0.5), width: 1, height: 1),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -160.5, y: 199.5, width: 0.5, height: 0.5),
+                  source: CGRect(x: 159.5, y: 0, width: 0.5, height: 0.5), width: 1, height: 1),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -320, y: 100, width: 0.5, height: 0.5),
+                  source: CGRect(x: 0, y: 99.5, width: 0.5, height: 0.5), width: 1, height: 1),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -160.5, y: 100, width: 0.5, height: 0.5),
+                  source: CGRect(x: 159.5, y: 99.5, width: 0.5, height: 0.5), width: 1, height: 1),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -304, y: 183, width: 1, height: 1),
+                  source: CGRect(x: 16, y: 16, width: 1, height: 1), width: 2, height: 2),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -303.5, y: 183, width: 1, height: 1),
+                  source: CGRect(x: 16.5, y: 16, width: 1, height: 1), width: 2, height: 2),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -304, y: 182.5, width: 1, height: 1),
+                  source: CGRect(x: 16, y: 16.5, width: 1, height: 1), width: 2, height: 2),
+            .init(scale: 2, displayFrame: frame,
+                  selection: CGRect(x: -303.5, y: 182.5, width: 1, height: 1),
+                  source: CGRect(x: 16.5, y: 16.5, width: 1, height: 1), width: 2, height: 2),
+            .init(scale: 1, displayFrame: otherFrame,
+                  selection: CGRect(x: 52, y: -142, width: 13, height: 7),
+                  source: CGRect(x: 12, y: 35, width: 13, height: 7), width: 13, height: 7),
+            .init(scale: 2, displayFrame: otherFrame,
+                  selection: CGRect(x: 52.5, y: -142.5, width: 13.5, height: 7.5),
+                  source: CGRect(x: 12.5, y: 35, width: 13.5, height: 7.5), width: 27, height: 15)
+        ]
+        var oneX = 0, twoX = 0
+        for (ordinal, vector) in vectors.enumerated() {
+            let display = try CaptureDisplaySnapshot(id: 99, frame: vector.displayFrame, scale: vector.scale)
+            let selection = try CaptureSelection(display: display, rect: vector.selection)
+            let plan = try RegionGeometry.plan(selection: selection, filterScale: vector.scale)
+            try expect(plan.sourceRect == vector.source && plan.pixelWidth == vector.width
+                       && plan.pixelHeight == vector.height, "configuration_contract_geometry_vector_mismatch")
+            let configuration = SCStreamConfiguration()
+            configuration.sourceRect = vector.source
+            configuration.width = vector.width
+            configuration.height = vector.height
+            try expect(configuration.sourceRect == vector.source,
+                       "configuration_contract_sdk_source_rect_readback_mismatch")
+            try expect(configuration.width == vector.width && configuration.height == vector.height,
+                       "configuration_contract_sdk_output_dimensions_readback_mismatch")
+            let scaleClass = BackingScaleClass(vector.scale)
+            if scaleClass == .oneX { oneX += 1 }
+            else if scaleClass == .twoX { twoX += 1 }
+            else { throw Failure(description: "configuration_contract_unexpected_scale_class") }
+            print("CONFIGURATION-CONTRACT-CELL ordinal=\(ordinal) scaleOrdinal=\(scaleClass.ordinal) backingScaleClass=\(scaleClass.rawValue) sourceWidthHalfPoints=\(halfPointUnits(vector.source.width)) sourceHeightHalfPoints=\(halfPointUnits(vector.source.height)) outputWidthPixels=\(vector.width) outputHeightPixels=\(vector.height) sdkReadbackMatched=1 captures=0 configurationOnly=1 originalFailureResolved=0")
+        }
+        var rejected = 0
+        func reject(_ expected: RegionGeometryError, _ operation: () throws -> Void) throws {
+            do {
+                try operation()
+                throw Failure(description: "configuration_contract_missing_geometry_rejection")
+            } catch let error as RegionGeometryError {
+                try expect(error == expected, "configuration_contract_wrong_geometry_rejection")
+                rejected += 1
+            }
+        }
+        for scale in [CGFloat(0), -1, .nan, .infinity] {
+            try reject(.invalidDisplay) { _ = try CaptureDisplaySnapshot(id: 99, frame: frame, scale: scale) }
+        }
+        for badFrame in [CGRect(x: CGFloat.nan, y: 0, width: 160, height: 100),
+                         CGRect(x: 0, y: 0, width: CGFloat.infinity, height: 100)] {
+            try reject(.invalidDisplay) { _ = try CaptureDisplaySnapshot(id: 99, frame: badFrame, scale: 2) }
+        }
+        let twoXDisplay = try CaptureDisplaySnapshot(id: 99, frame: frame, scale: 2)
+        for rect in [CGRect(x: CGFloat.nan, y: 100, width: 1, height: 1),
+                     CGRect(x: CGFloat.infinity, y: 100, width: 1, height: 1),
+                     CGRect(x: -320, y: 100, width: CGFloat.infinity, height: 1)] {
+            try reject(.invalidPoint) { _ = try CaptureSelection(display: twoXDisplay, rect: rect) }
+        }
+        for rect in [CGRect(x: -320, y: 100, width: 0, height: 1),
+                     CGRect(x: -320, y: 100, width: 1, height: 0)] {
+            try reject(.emptySelection) { _ = try CaptureSelection(display: twoXDisplay, rect: rect) }
+        }
+        for rect in [CGRect(x: -320.5, y: 100, width: 0.5, height: 0.5),
+                     CGRect(x: -160, y: 100, width: 0.5, height: 0.5),
+                     CGRect(x: -320, y: 99.5, width: 0.5, height: 0.5),
+                     CGRect(x: -320, y: 200, width: 0.5, height: 0.5)] {
+            try reject(.selectionOutsideDisplay) { _ = try CaptureSelection(display: twoXDisplay, rect: rect) }
+        }
+        let oneXDisplay = try CaptureDisplaySnapshot(id: 99, frame: frame, scale: 1)
+        try reject(.notPixelAligned) {
+            _ = try CaptureSelection(display: oneXDisplay, rect: CGRect(x: -319.5, y: 100, width: 1, height: 1))
+        }
+        try reject(.notPixelAligned) {
+            _ = try CaptureSelection(display: twoXDisplay, rect: CGRect(x: -319.75, y: 100, width: 0.5, height: 0.5))
+        }
+        let valid = try CaptureSelection(display: twoXDisplay, rect: CGRect(x: -320, y: 100, width: 0.5, height: 0.5))
+        for scale in [CGFloat(0), .nan, .infinity, 1] {
+            try reject(.scaleMismatch) { _ = try RegionGeometry.plan(selection: valid, filterScale: scale) }
+        }
+        try expect(vectors.count == 14 && oneX == 5 && twoX == 9 && rejected == 21,
+                   "configuration_contract_case_count_mismatch")
+        print("PASS CONFIGURATION-CONTRACT positiveVectors=14 oneXCases=5 twoXCases=9 cornerCases=8 halfPointOriginCases=4 rectangularCases=2 rejectedGeometryCases=21 captures=0 configurationOnly=1 originalFailureResolved=0")
     }
 
     static let expectedFrame = CGRect(x: -320, y: 40, width: 540, height: 440)
