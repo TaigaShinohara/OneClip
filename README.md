@@ -3,9 +3,15 @@
 必要なところを集めて、ひと貼りで伝えるmacOSのメニューバーアプリです。
 一箇所をすぐコピーする操作と、複数箇所を一枚にまとめる操作を用意しています。
 
-現在は開発中です。単発コピーとまとめ撮りは実装済みですが、安定性・使いやすさの確認（M4）は未完了です。
-手動アップデートに対応しています。初回は[GitHub Releaseの0.2.0](https://github.com/TaigaShinohara/OneClip/releases/tag/v0.2.0)からアプリを配置し、以後の新しい公開版をメニュー・設定から確認できます。
-ソースは[MIT License](LICENSE)で提供します。
+[**OneClip 1.0.0をダウンロード（ZIP）**](https://github.com/TaigaShinohara/OneClip/releases/download/v1.0.0/OneClip-1.0.0.zip) · [リリース情報](https://github.com/TaigaShinohara/OneClip/releases/tag/v1.0.0)
+
+ZIPを展開し、`OneClip.app`をアプリケーションフォルダへ移動して起動してください。画面上端のOneClipメニューから使えます。必要な時だけmacOSの画面収録を許可します。0.2.0以降の既存アプリでは「アップデートを確認…」から更新できます。
+
+macOS 14以降を対象とするApple Silicon／Intelのuniversal版です。最小OS・Intel実機と全面VoiceOver、全画面構成は未実証です。Developer ID署名・Apple公証・チケット添付済みのアプリを配布します。App Store配布は行っていません。ソースは[MIT License](LICENSE)で提供します。
+
+![必要な部分を撮り、一枚にまとめ、コメントを添える機能紹介](docs/images/oneclip-demo.gif)
+
+架空の画面から生成した出力例を使った機能紹介です。操作録画ではありません。[静止画](docs/images/oneclip-overview.png)・[注釈付きの完成PNG例](docs/images/annotated-output.png)も確認できます。
 
 ## できること
 
@@ -56,6 +62,10 @@
 
 更新機能がない既存アプリには、最初だけ更新機能入りのアプリを手動で配置する必要があります。公開用の署名・公証済みアプリは[GitHub Releases](https://github.com/TaigaShinohara/OneClip/releases)から取得できます。製品版同士の実更新は未実証です。仕組みと公開手順は[手動アップデート](docs/UPDATES.md)を参照してください。
 
+## 困ったとき
+
+通常の不具合は[GitHub Issues](https://github.com/TaigaShinohara/OneClip/issues)へ、機密情報に関わる問題は[非公開の報告窓口](SECURITY.md)へ連絡してください。実画面・クリップボード内容・秘密情報は添付せず、可能なら架空素材の再現手順を記載してください。
+
 ## データの扱い
 
 単発撮影のPNGと、まとめ撮りで完成コピーするPNGを、アプリのサンドボックス内にある `Application Support/OneClip/Captures` へ自動保存します。メニューから保存フォルダを開けます。保存先を毎回選ぶ操作はありません。コピーと保存の結果は別々に扱い、保存できなかった場合もコピーの成否と区別して案内します。
@@ -83,7 +93,7 @@ OneClipの素材を破棄しても、保存済みファイル、すでにコピ�
 - Xcode 16以上、Swift 6対応のツールチェーン
 - 更新機能にSparkle 2.10.1をSwift Package Managerで完全固定。初回の依存解決にはネットワーク接続が必要
 - Xcodeプロジェクト：`OneClip.xcodeproj`、共有scheme：`OneClip`
-- Bundle ID：`local.OneClip`（ローカル開発用の暫定値）
+- Bundle ID：`local.OneClip`（既存公開版の保存データ・権限・更新との互換性のため維持）
 
 新しいビルドを始める前に、実行中のビルド、メモリ、作業先と一時領域の空き容量を確認します。
 
