@@ -23,6 +23,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     @Published private(set) var statusText = ""
 
     var canOpen: @MainActor () -> Bool = { true }
+    var interactionBlocked: @MainActor () -> Bool = { false }
     var externalRetainedBytes: @MainActor () throws -> Int = { 0 }
     var blocksCapture: Bool { isOpen || isWorking }
     let securityTrace: CaptureSecurityTrace
@@ -89,12 +90,16 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     }
 
     func show() {
-        guard isOpen else { return }
+        guard isOpen, !interactionBlocked() else { return }
         guard environmentCheck() else { invalidate(); return }
         showWindow()
     }
 
     @discardableResult func open(_ url: URL) -> Bool {
+        guard !interactionBlocked() else {
+            statusText = "アップデートが終わるまでお待ちください。"
+            return false
+        }
         if isOpen {
             guard environmentCheck() else { invalidate(); return false }
             showWindow(); return true
@@ -381,7 +386,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     func waitForWorker() async { await worker?.value }
 
     private func editable() -> Bool {
-        guard isOpen, !isWorking, image != nil else { return false }
+        guard isOpen, !isWorking, image != nil, !interactionBlocked() else { return false }
         guard environmentCheck() else { invalidate(); return false }
         return true
     }

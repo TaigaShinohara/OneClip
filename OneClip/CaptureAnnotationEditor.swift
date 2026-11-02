@@ -18,6 +18,7 @@ struct CaptureAnnotationEditorView: View {
             footer
         }
         .frame(minWidth: 740, minHeight: 480)
+        .disabled(controller.interactionBlocked())
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: controller.pendingCommentPoint) { _, point in
             if point != nil { commentFocused = true }

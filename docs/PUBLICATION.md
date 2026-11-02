@@ -2,13 +2,13 @@
 
 公開先は `TaigaShinohara/OneClip`、対象はソース・テスト・Xcodeプロジェクト・技術文書です。
 ライセンスは[MIT](../LICENSE)。著作権表示は `Copyright (c) 2026 TaigaShinohara` です。
-一般向けアプリ配布・署名・公証は別工程です。
+一般向けアプリ配布・署名・公証は別工程です。手動アップデート用の候補とフィードは[更新手順](UPDATES.md)に従って準備し、完成候補の公開承認後にだけ配布します。
 
 ## 公開する情報
 
 機能、仕様、ビルド・貢献手順、技術的な検証結果と限定条件、未確認事項を記載します。
 個人の操作・回答・認証経緯、会話・作業日誌、内部管理リンク・識別子、個人パス、私用環境の詳細を含めません。
-実画像、画面・クリップボードの内容、認証情報、署名鍵、ビルド成果物も含めません。
+ソースtreeには実画像、画面・クリップボードの内容、認証情報、秘密署名鍵、ビルド成果物を含めません。更新用アプリは、承認済みの完成ZIPだけを別のGitHub Release添付として扱います。公開Ed25519鍵はアプリ設定へ同梱します。
 公開するGit著者名・著作権者名は `TaigaShinohara` に揃えます。
 プロジェクト窓口と今後のローカルGit作者メールには `deeple+oneclipstaff@inkboxmail.com` を使います。
 GitHubが生成する作者・コミッター情報とGitHub noreplyメールは別に分類します。
@@ -59,7 +59,7 @@ Release添付、Issue・PR、Actions成果物など、ソース以外の公開�
 
 ## コード・素材・名称
 
-外部Swift package、vendored code、同梱画像・フォントはありません。
+更新機能はSparkle 2.10.1をSwift Package Managerのexact versionで利用します。SDKと同梱コードの表示は[THIRD_PARTY_NOTICES](../THIRD_PARTY_NOTICES.md)へ記録します。同梱画像・フォントは追加していません。
 Apple SDK・OSフォント・SF SymbolsはUI APIから参照し、素材ファイルを再配布していません。
 本ソースのMITは、それら自体を再許諾するものではありません。
 [AppleのSF Symbols案内](https://developer.apple.com/design/human-interface-guidelines/sf-symbols)を参照してください。
@@ -75,4 +75,4 @@ OneClipには、[Posidexの製品](https://marketplace.microsoft.com/en-us/produ
 先行ソース公開を公開v1の品質合格としません。M4と対象Collection VoiceOverは保留で、別環境のclone→build等も未実施です。
 工程・受入条件は[ROADMAP](ROADMAP.md)を参照してください。
 通常の変更は公開リポジトリのブランチ・PR・レビュー・mergeで行います。
-内部履歴をmergeせず、自動CI・アプリ配布・公証・課金を自動追加しません。
+内部履歴をmergeせず、自動CI・定期更新・課金は追加しません。ソースのcommit／push／PR／mergeの承認と、アプリZIPの外部公開・Appleへの公証提出・初回配置の承認は分けます。署名と検証を終えた候補のhash・版・フィード・配布先を確認できる状態にしてから、後者の承認を最終段階で求めます。

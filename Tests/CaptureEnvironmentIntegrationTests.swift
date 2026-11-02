@@ -23,7 +23,8 @@ struct CaptureEnvironmentIntegrationTests {
             ("ENV-09 result admission and preview dismissal use isolated dependencies", testResultServiceAdmission),
             ("ENV-10 nine native routes fence real result PNGs and gated archive workers", testRealResultWorkerRoutes),
             ("ENV-11 nine native routes invalidate isolated annotation before other owners", testAnnotationServiceRoutes),
-            ("ENV-12 nine native routes fence actual annotation load and render workers", testRealAnnotationWorkerRoutes)
+            ("ENV-12 nine native routes fence actual annotation load and render workers", testRealAnnotationWorkerRoutes),
+            ("UPDATE-ENV-01 installation lock blocks both capture modes and restores admission", testUpdateInstallationAdmission)
         ]
         for (name, body) in groups {
             try await body()
@@ -572,6 +573,83 @@ struct CaptureEnvironmentIntegrationTests {
             }
         }
         print("PASS ENV annotation routes=9 syntheticAnnotationServices=1 actualAnnotationWorker=0")
+    }
+
+    /// The update lock is an isolated dependency. This test never constructs the
+    /// shared updater, performs a network check, or invokes an installer or real UI.
+    @MainActor
+    static func testUpdateInstallationAdmission() async throws {
+        final class UpdateLock { var isInstalling = false }
+        try await withHarness { h in
+            let lock = UpdateLock()
+            try expect(!h.native.captureEntryBlocked && !h.native.collectionCopyBlocked,
+                       "An isolated interface unexpectedly resolved a live updater lock")
+            h.native.updateBlocksCapture = { lock.isInstalling }
+            try expect(!h.native.captureEntryBlocked && !h.native.collectionCopyBlocked,
+                       "An idle update dependency changed ordinary admission")
+
+            h.collection.beginOrAdd()
+            try h.select(.collection)
+            await h.collection.waitForWorker()
+            try expect(h.collection.assets.count == 1 && h.collection.canAdd && h.collection.canCopy,
+                       "Synthetic collection was not ready before the update lock")
+            let revision = h.collection.contentRevision
+            let items = h.collection.items.map(\.id)
+            let singleSelections = h.singleUI.selectionCalls
+            let collectionSelections = h.collectionUI.selectionCalls
+            let writes = h.singleWriter.calls + h.collectionWriter.calls
+            let dismissals = h.result.dismissals
+
+            lock.isInstalling = true
+            try expect(h.native.captureEntryBlocked && h.native.collectionCopyBlocked,
+                       "Installation did not synchronously close both native admission gates")
+            try expect(!h.native.prepareForSelection() && h.result.dismissals == dismissals,
+                       "An update-blocked entry altered result presentation")
+            h.single.begin()
+            h.collection.beginOrAdd()
+            h.collection.beginNewSession(discardConfirmed: true)
+            if let item = h.collection.items.first { h.collection.replace(assetID: item.id) }
+            h.collection.copy()
+            await h.single.waitForWorker()
+            await h.collection.waitForWorker()
+            try expect(h.singleUI.selectionCalls == singleSelections
+                       && h.collectionUI.selectionCalls == collectionSelections
+                       && h.singleWriter.calls + h.collectionWriter.calls == writes
+                       && !h.single.isWorking && !h.collection.isWorking && !h.slot.isOccupied,
+                       "An installation lock permitted selection, acquisition, or clipboard work")
+            try expect(h.collection.items.map(\.id) == items && h.collection.contentRevision == revision
+                       && !h.collection.canAdd && !h.collection.canCopy,
+                       "An installation lock discarded or changed the retained collection")
+
+            lock.isInstalling = false
+            try expect(!h.native.captureEntryBlocked && !h.native.collectionCopyBlocked
+                       && h.single.canBegin && h.collection.canAdd && h.collection.canCopy,
+                       "Releasing the update lock left capture or copy admission closed")
+            for _ in 0..<3 { await Task.yield() }
+            try expect(h.singleUI.selectionCalls == singleSelections
+                       && h.collectionUI.selectionCalls == collectionSelections
+                       && h.singleWriter.calls + h.collectionWriter.calls == writes,
+                       "Releasing the update lock automatically resumed an old operation")
+            h.single.begin()
+            try expect(h.singleUI.selectionCalls == singleSelections + 1,
+                       "A fresh single capture could not start after the update lock")
+            h.single.cancel()
+            h.collection.copy()
+            await h.collection.waitForWorker()
+            try expect(h.collectionWriter.calls == 1 && h.collection.contentRevision == revision,
+                       "A fresh collection copy did not recover without changing its content")
+
+            // Clearing the updater's lock must not override another unresolved owner.
+            h.result.blocksCapture = true
+            lock.isInstalling = true
+            lock.isInstalling = false
+            try expect(h.native.captureEntryBlocked && h.native.collectionCopyBlocked,
+                       "Releasing the update lock bypassed another owner's gate")
+            h.result.blocksCapture = false
+            h.native.updateBlocksCapture = nil
+            try expect(!h.native.captureEntryBlocked && !h.native.collectionCopyBlocked,
+                       "Removing the isolated update dependency failed to restore the original state")
+        }
     }
 
     @MainActor
