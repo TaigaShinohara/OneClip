@@ -66,13 +66,14 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var collectionPresentationBlocksEntry: Bool { collectionExpanded || collectionConfirmationPending }
     var isOneClipActive: Bool { NSApp.isActive }
     var settingsBlockCapture: (@MainActor () -> Bool)?
+    var updateBlocksCapture: (@MainActor () -> Bool)?
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
     var collectionCopyBlocked: Bool {
-        annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
+        updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     var captureEntryBlocked: Bool {
-        annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
+        updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
             || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?

@@ -34,6 +34,7 @@ struct OneClipApp: App {
     @StateObject private var keys = ProductHotKeyController.shared
     @StateObject private var result = CaptureResultController.shared
     @StateObject private var annotation = CaptureAnnotationController.shared
+    @StateObject private var updates = AppUpdateController.shared
     var body: some Scene {
         MenuBarExtra {
             Text("OneClip — まとめ撮りbeta 開発中")
@@ -128,6 +129,14 @@ struct OneClipApp: App {
             Button("M0 検証パネル…") { M0LabController.shared.show() }
                 .disabled(collection.isActive || collection.isWorking || capture.isWorking || capture.phase == .selecting || NativeCaptureInterface.shared.hasDiscardConfirmation || keys.desiredChord != nil || M2FailureLab.isEnabled || M3FailureLab.isEnabled)
             #endif
+            Divider()
+            Button("アップデートを確認…") { updates.checkForUpdates(channel: .stable) }
+                .disabled(!updates.canCheckForUpdates)
+            if updates.hasPostponedInstallation {
+                Text(updates.statusText)
+                Button("更新して再起動") { updates.resumeInstallationIfReady() }
+                    .disabled(!updates.canResumeInstallation)
+            }
             Divider()
             Button("OneClipを終了") {
                 NSApplication.shared.terminate(nil)
@@ -239,6 +248,38 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
                 collection?.objectWillChange.send()
             }
         }.store(in: &stateSubscriptions)
+        let updates = AppUpdateController.shared
+        interface.updateBlocksCapture = { updates.isInstalling }
+        updates.installationLockWillChange = { ProductHotKeyController.shared.discardQueuedPresses() }
+        updates.activityProvider = {
+            var activity = AppUpdateActivity()
+            activity.captureWorking = capture.isWorking
+            activity.captureSelecting = capture.phase == .selecting || collection.phase == .selecting
+            activity.capturePermissionOrGuide = [.permission, .onboarding].contains(capture.phase)
+                || [.permission, .onboarding].contains(collection.phase)
+            activity.retainedSingleImage = capture.hasRetainedImage
+            activity.workerOccupied = CaptureWorkerSlot.shared.isOccupied
+            activity.resultSaving = CaptureResultController.shared.isSaving
+            activity.pendingSave = CaptureResultController.shared.hasPendingSave
+            activity.annotationWorking = annotation.isWorking
+            activity.annotationDirty = annotation.isDirty || annotation.hasDraftChanges
+            activity.collectionWorking = collection.isWorking
+            activity.collectionNeedsConfirmation = collection.needsEndConfirmation
+            activity.replacementPending = collection.pendingReplacement != nil
+            activity.confirmationVisible = interface.hasDiscardConfirmation || interface.collectionConfirmationPending
+                || CaptureSettingsController.shared.hasPresentedSheet
+            activity.recordingShortcut = ProductHotKeyController.shared.settingsInteractionBlocked
+            activity.installing = updates.isInstalling
+            return activity
+        }
+        annotation.interactionBlocked = { updates.isInstalling }
+        updates.objectWillChange.sink { [weak capture, weak collection, weak annotation] _ in
+            MainActor.assumeIsolated {
+                capture?.objectWillChange.send()
+                collection?.objectWillChange.send()
+                annotation?.objectWillChange.send()
+            }
+        }.store(in: &stateSubscriptions)
         let keys = ProductHotKeyController.shared
         keys.deliveryAllowed = {
             OneClipModeActions.canStartSingle
@@ -272,6 +313,14 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let updates = AppUpdateController.shared
+        guard updates.prepareForApplicationTermination() else { return .terminateCancel }
+        let reply = terminationReply(sender)
+        if reply == .terminateCancel { updates.applicationTerminationCancelled() }
+        return reply
+    }
+
+    private func terminationReply(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !awaitingQuitDecision else { return .terminateLater }
         guard CaptureAnnotationController.shared.requestClose() else { return .terminateCancel }
         guard CaptureResultController.shared.prepareToQuit() else { return .terminateCancel }
@@ -288,6 +337,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
             if confirmed { capture.stop(); collection.stop() }
             Task { @MainActor [weak self] in
                 self?.awaitingQuitDecision = false
+                if !confirmed { AppUpdateController.shared.applicationTerminationCancelled() }
                 sender.reply(toApplicationShouldTerminate: confirmed)
             }
         }
@@ -295,6 +345,7 @@ final class OneClipAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !AppUpdateController.shared.isInstalling else { return true }
         let capture = SingleCaptureCoordinator.shared
         let collection = CollectionCaptureCoordinator.shared
         let interface = NativeCaptureInterface.shared

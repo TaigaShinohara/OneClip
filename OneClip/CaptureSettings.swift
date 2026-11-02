@@ -13,7 +13,8 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
               window.isOnActiveSpace else { return nil }
         return window
     }
-    fileprivate var canAcceptKeySetting: Bool { NSApp.isActive && isRecordingWindow(window) }
+    fileprivate var canAcceptKeySetting: Bool { !AppUpdateController.shared.isInstalling && NSApp.isActive && isRecordingWindow(window) }
+    var hasPresentedSheet: Bool { window?.attachedSheet != nil }
     var blocksCapture: Bool {
         #if DEBUG
         if showingNotificationDiagnostics { return true }
@@ -91,6 +92,7 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
     #endif
 
     func show() {
+        guard !AppUpdateController.shared.isInstalling else { return }
         #if DEBUG
         if M2FailureLab.isEnabled || M3FailureLab.isEnabled || showingNotificationDiagnostics { return }
         #endif
@@ -143,6 +145,7 @@ final class CaptureSettingsController: NSObject, NSWindowDelegate {
 }
 
 private struct CaptureSettingsView: View {
+    @ObservedObject private var updates = AppUpdateController.shared
     @ObservedObject var keys: ProductHotKeyController
     @State private var role: CaptureHotKeyRole = .single
     @State private var candidate: HotKeyChord?
@@ -195,6 +198,7 @@ private struct CaptureSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 4).padding(.bottom, 10)
                     CaptureDataNotice(isActionDisabled: recording || candidate != nil || keys.settingsInteractionBlocked)
+                    AppUpdateSettingsSection().padding(.top, 20)
                         .padding(.horizontal, 4).padding(.bottom, 16)
                     DisclosureGroup("キーの使い方", isExpanded: $showsHelp) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -216,6 +220,7 @@ private struct CaptureSettingsView: View {
         }
         .frame(width: 540, height: min(510, (NSScreen.main?.visibleFrame.height ?? 800) - 120))
         .background(Color(nsColor: .windowBackgroundColor))
+        .disabled(updates.isInstalling)
         .onChange(of: keys.settingsInteractionBlocked) { _, blocked in
             if !blocked && (recording || candidate != nil) {
                 resetInput(for: role)

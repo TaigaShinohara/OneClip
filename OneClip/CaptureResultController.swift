@@ -326,6 +326,7 @@ final class CaptureResultController: ObservableObject {
     }
 
     func annotateLatest() {
+        guard !AppUpdateController.shared.isInstalling else { return }
         guard let url = latestURL else { return }
         let editor = CaptureAnnotationController.shared
         if editor.open(url) { dismissPreview() }
@@ -333,6 +334,7 @@ final class CaptureResultController: ObservableObject {
     }
 
     func editLatest() {
+        guard !AppUpdateController.shared.isInstalling else { return }
         guard let original = latestURL, !isSaving, !hasPendingSave else { return }
         // This method is a fresh explicit edit action, including the menu after auto-hide.
         // Stale view callbacks are separately fenced by their captured revision token.
