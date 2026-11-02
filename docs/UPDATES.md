@@ -87,3 +87,12 @@ M4総合、対象Collection VoiceOver、表示・IMEなどの未実証は継続�
 - appに同梱した公開鍵だけを使い、最終ZIPの全bytesとSparkle 2.10.1の署名block抽出仕様に対応するfeedのEd25519署名を別々に検証しました。公開URLからZIPを再取得して、HTTP 200・長さ・hash・アーカイブ署名の一致も確認しました。
 
 これは署名・公証・初回配布物の個別検証です。初回の手動配置、製品UIの操作、製品版同士の更新・rollback、offline起動、macOS 14／Intel実機などの受入へ拡張しません。M4総合と対象Collection VoiceOverの保留は継続します。保存画像・設定・権限やGatekeeperの設定を変更して公開を成立させていません。
+
+
+## 1.0.0の公開と製品更新
+
+[Release v1.0.0](https://github.com/TaigaShinohara/OneClip/releases/tag/v1.0.0)の署名・公証・staple済みZIPと、旧0.2.0 itemを保持した署名フィードを公開しました。公開先から再取得したZIP・feedのhash/長さと、アプリ公開鍵による両署名が一致しました。
+
+0.2.0/build 2の製品UIから1.0.0/build 3へ実更新し、再起動後の版表示、実行物vnodeと最終app manifest、架空の保存PNG・既存PNGのmetadata・6設定の保持を確認しました。[1.0.0の最小公開確認](RELEASE-1.0.0.md)に配布物の識別情報と確認範囲を記録しています。
+
+以前の未実施記載は各記録時点のものです。今回の代表経路の成功を、全OS/CPU・全編集状態・全失敗/rollback経路・全面VoiceOverの成功へは広げません。追加の詳細評価は公開必須条件にせず、通常利用の具体的な問題がある場合だけ扱います。

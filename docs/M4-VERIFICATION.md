@@ -1,7 +1,7 @@
 # M4 安定性・使いやすさの検証要約
 
-M4は未完了です。[公開に必要な最小確認](ROADMAP.md#minimum-release-checks)は未判定です。
-従来の詳細評価に基づく非VoiceOver限定判定と総合判定も未完了ですが、その全項目の合格を今後の公開条件にはしません。
+[公開に必要な最小確認](ROADMAP.md#minimum-release-checks)は、[1.0.0の記録条件](RELEASE-1.0.0.md)で完了しました。
+従来の詳細評価に基づく非VoiceOver限定判定と総合判定は未完了・保留で、その全項目の合格や全環境の保証へは広げません。
 本書は確認済みの技術上の結果と残件をまとめた公開用要約です。
 仕様・受入条件は[ROADMAP](ROADMAP.md)、前段階の限定完了は[M3](M3-VERIFICATION.md#m3-completion)を参照してください。
 
