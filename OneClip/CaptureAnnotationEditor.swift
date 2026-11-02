@@ -33,7 +33,7 @@ struct CaptureAnnotationEditorView: View {
             OneClipBadge(systemName: "pencil.tip.crop.circle", tone: .single, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 Text("画像に注釈").font(.title3.bold())
-                Text("矢印やコメントで、伝えたい箇所を示せます。")
+                Text("吹き出しや囲みで、伝えたい箇所を示せます。")
                     .font(.callout).foregroundStyle(.secondary)
                 Text("原本は残ります。コメントや囲みで、写った機密情報を隠すことはできません。")
                     .font(.caption).foregroundStyle(.secondary)
@@ -48,9 +48,11 @@ struct CaptureAnnotationEditorView: View {
         HStack(spacing: 8) {
             toolButton(nil, title: "選択", symbol: "cursorarrow")
             toolButton(.comment, title: "コメント", symbol: "text.bubble")
-            toolButton(.arrow, title: "矢印", symbol: "arrow.up.right")
-            toolButton(.rectangle, title: "囲み", symbol: "rectangle")
+            toolButton(.rectangle, title: "四角囲み", symbol: "rectangle")
+            toolButton(.freehand, title: "手書き囲み", symbol: "scribble")
             toolButton(.number, title: "番号", symbol: "number.circle")
+            Divider().frame(height: 20).padding(.horizontal, 4)
+            colorPalette
             Spacer(minLength: 12)
             Button { controller.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!controller.canUndo || controller.isWorking)
@@ -61,6 +63,34 @@ struct CaptureAnnotationEditorView: View {
         }
         .buttonStyle(.bordered)
         .padding(.horizontal, 20).padding(.vertical, 10)
+    }
+
+    private var colorPalette: some View {
+        HStack(spacing: 6) {
+            ForEach(AnnotationColor.allCases, id: \.self) { color in
+                Button {
+                    controller.setColor(color)
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color(cgColor: color.cgColor))
+                            .frame(width: 18, height: 18)
+                        Circle()
+                            .strokeBorder(color == .white ? Color.gray.opacity(0.4) : Color.white.opacity(0.6), lineWidth: 1)
+                            .frame(width: 18, height: 18)
+                        if controller.selectedColor == color {
+                            Circle()
+                                .strokeBorder(Color.accentColor, lineWidth: 2.5)
+                                .frame(width: 24, height: 24)
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+                .help(color.displayName)
+                .accessibilityLabel(color.displayName)
+            }
+        }
     }
 
     private func toolButton(_ kind: CaptureAnnotation.Kind?, title: String, symbol: String) -> some View {
@@ -152,26 +182,26 @@ struct CaptureAnnotationEditorView: View {
     }
 
     private var commentHelp: String {
-        if controller.pendingCommentPoint != nil { return "この位置に付ける文を入力してください。" }
-        if controller.selectedAnnotation?.kind == .comment { return "選択したコメントを書き換えられます。" }
-        return "「コメント」を選び、画像上をクリックして入力位置を決めます。"
+        if controller.pendingCommentPoint != nil { return "指し示す位置に付ける吹き出しの文を入力してください。" }
+        if controller.selectedAnnotation?.kind == .comment { return "選択した吹き出しのコメントを書き換えられます。" }
+        return "「コメント」を選び、画像上をクリックして吹き出しを置きます。"
     }
 
     private var toolHelp: String {
         switch controller.tool {
-        case .comment: return "画像上をクリックしてコメントを置きます。"
-        case .arrow: return "矢印の始点から、指したい箇所までドラッグします。"
+        case .comment: return "画像上をクリックして吹き出しコメントを置きます。"
         case .rectangle: return "囲みたい範囲の対角線をドラッグします。"
+        case .freehand: return "画像の上をドラッグして手書きで囲みます。"
         case .number: return "画像上をクリックして番号を置きます。"
-        case nil: return "注釈をクリックして選び、ドラッグで移動します。"
+        case nil: return "注釈をクリックして選び、ドラッグで移動します。吹き出しの先端も動かせます。"
         }
     }
 
     private func kindTitle(_ kind: CaptureAnnotation.Kind) -> String {
         switch kind {
-        case .comment: return "コメント"
-        case .arrow: return "矢印"
-        case .rectangle: return "囲み"
+        case .comment: return "吹き出しコメント"
+        case .rectangle: return "四角囲み"
+        case .freehand: return "手書き囲み"
         case .number: return "番号"
         }
     }
@@ -245,9 +275,26 @@ private struct CaptureAnnotationCanvas: NSViewRepresentable {
 private final class AnnotationScrollView: NSScrollView {
     override func layout() {
         super.layout()
+        updateCanvasLayout()
+    }
+
+    override func tile() {
+        super.tile()
+        updateCanvasLayout()
+    }
+
+    override func reflectScrolledClipView(_ cView: NSClipView) {
+        super.reflectScrolledClipView(cView)
+        updateCanvasLayout()
+    }
+
+    private func updateCanvasLayout() {
         guard let canvas = documentView as? AnnotationCanvasView else { return }
-        canvas.viewportSize = contentView.bounds.size
-        canvas.resizeCanvas()
+        let size = contentView.bounds.size
+        if size.width > 0 && size.height > 0 {
+            canvas.viewportSize = size
+            canvas.resizeCanvas()
+        }
     }
 }
 
@@ -263,6 +310,8 @@ private final class AnnotationCanvasView: NSView {
     private var previousPoint: CGPoint?
     private var gestureTool: CaptureAnnotation.Kind?
     private var moving = false
+    private var movingTail = false
+    private var freehandPoints: [CGPoint] = []
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -325,6 +374,15 @@ private final class AnnotationCanvasView: NSView {
         if let selected = controller.selectedAnnotation,
            let rect = try? CaptureAnnotationRenderer.bounds(for: selected, imageSize: imageSize) {
             context.stroke(rect.insetBy(dx: -3 / zoom, dy: -3 / zoom))
+            if selected.kind == .comment {
+                let tail = pixelPoint(selected.start, size: imageSize)
+                context.setLineDash(phase: 0, lengths: [])
+                context.setFillColor(NSColor.white.cgColor)
+                context.fillEllipse(in: CGRect(x: tail.x - 6 / zoom, y: tail.y - 6 / zoom, width: 12 / zoom, height: 12 / zoom))
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.setLineWidth(2 / zoom)
+                context.strokeEllipse(in: CGRect(x: tail.x - 6 / zoom, y: tail.y - 6 / zoom, width: 12 / zoom, height: 12 / zoom))
+            }
         }
         if let point = controller.pendingCommentPoint {
             let point = pixelPoint(point, size: imageSize)
@@ -332,15 +390,30 @@ private final class AnnotationCanvasView: NSView {
             context.strokeEllipse(in: CGRect(x: point.x - 5 / zoom, y: point.y - 5 / zoom,
                                              width: 10 / zoom, height: 10 / zoom))
         }
+        if gestureTool == .freehand, freehandPoints.count >= 2 {
+            context.setLineDash(phase: 0, lengths: [])
+            let path = CGMutablePath()
+            let first = pixelPoint(freehandPoints[0], size: imageSize)
+            path.move(to: first)
+            for pt in freehandPoints.dropFirst() {
+                path.addLine(to: pixelPoint(pt, size: imageSize))
+            }
+            context.addPath(path)
+            context.setStrokeColor(controller.selectedColor.contrastColor)
+            context.setLineWidth(4 / zoom)
+            context.strokePath()
+            context.addPath(path)
+            context.setStrokeColor(controller.selectedColor.cgColor)
+            context.setLineWidth(2 / zoom)
+            context.strokePath()
+        }
         guard let start = gestureStart, let end = gestureEnd else { return }
         let a = pixelPoint(start, size: imageSize), b = pixelPoint(end, size: imageSize)
         if gestureTool == .rectangle {
+            context.setLineDash(phase: 0, lengths: [4 / zoom, 2 / zoom])
+            context.setStrokeColor(controller.selectedColor.cgColor)
             context.stroke(CGRect(x: min(a.x, b.x), y: min(a.y, b.y),
                                   width: abs(b.x - a.x), height: abs(b.y - a.y)))
-        } else if gestureTool == .arrow {
-            context.move(to: a)
-            context.addLine(to: b)
-            context.strokePath()
         }
     }
 
@@ -370,9 +443,33 @@ private final class AnnotationCanvasView: NSView {
         previousPoint = point
         gestureTool = controller.tool
         if controller.tool == nil {
+            if let selected = controller.selectedAnnotation, selected.kind == .comment, let imageSize {
+                let tailPixel = pixelPoint(selected.start, size: imageSize)
+                let clickPixel = pixelPoint(point, size: imageSize)
+                let dist = hypot((clickPixel.x - tailPixel.x) * zoom, (clickPixel.y - tailPixel.y) * zoom)
+                if dist <= 14 {
+                    movingTail = true
+                    controller.beginMove()
+                    needsDisplay = true
+                    return
+                }
+            }
             controller.select(at: point)
+            if let selected = controller.selectedAnnotation, selected.kind == .comment, let imageSize {
+                let tailPixel = pixelPoint(selected.start, size: imageSize)
+                let clickPixel = pixelPoint(point, size: imageSize)
+                let dist = hypot((clickPixel.x - tailPixel.x) * zoom, (clickPixel.y - tailPixel.y) * zoom)
+                if dist <= 14 {
+                    movingTail = true
+                    controller.beginMove()
+                    needsDisplay = true
+                    return
+                }
+            }
             controller.beginMove()
             moving = true
+        } else if controller.tool == .freehand {
+            freehandPoints = [point]
         }
         needsDisplay = true
     }
@@ -380,8 +477,12 @@ private final class AnnotationCanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         guard let controller, controller.isOpen, !controller.isWorking,
               gestureStart != nil, let point = normalizedPoint(event, clamped: true) else { return }
-        if moving, let previousPoint {
+        if movingTail, let previousPoint {
+            controller.moveSelectedTail(by: CGPoint(x: point.x - previousPoint.x, y: point.y - previousPoint.y))
+        } else if moving, let previousPoint {
             controller.moveSelected(by: CGPoint(x: point.x - previousPoint.x, y: point.y - previousPoint.y))
+        } else if gestureTool == .freehand {
+            freehandPoints.append(point)
         }
         previousPoint = point
         gestureEnd = point
@@ -389,24 +490,34 @@ private final class AnnotationCanvasView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        guard let controller, controller.isOpen, !controller.isWorking,
-              let start = gestureStart, controller.tool == gestureTool else {
+        guard let controller, controller.isOpen, !controller.isWorking else {
             finishGesture()
             return
         }
-        if !moving, let end = normalizedPoint(event, clamped: true) {
+        if movingTail {
+            controller.endMove()
+            movingTail = false
+        } else if !moving, gestureTool == .freehand {
+            if freehandPoints.count >= 2 {
+                controller.addFreehand(points: freehandPoints)
+            }
+            freehandPoints.removeAll()
+        } else if !moving, let start = gestureStart, controller.tool == gestureTool,
+                  let end = normalizedPoint(event, clamped: true) {
             controller.gesture(from: start, to: end)
         }
         finishGesture()
     }
 
     func finishGesture() {
-        if moving { controller?.endMove() }
+        if moving || movingTail { controller?.endMove() }
         moving = false
+        movingTail = false
         gestureStart = nil
         gestureEnd = nil
         previousPoint = nil
         gestureTool = nil
+        freehandPoints.removeAll()
         needsDisplay = true
     }
 

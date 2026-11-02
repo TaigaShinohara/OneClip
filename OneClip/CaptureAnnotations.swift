@@ -4,19 +4,65 @@ import Foundation
 import ImageIO
 import UniformTypeIdentifiers
 
+enum AnnotationColor: String, Sendable, CaseIterable, Equatable {
+    case red, blue, green, yellow, orange, black, white
+
+    var displayName: String {
+        switch self {
+        case .red: return "赤"
+        case .blue: return "青"
+        case .green: return "緑"
+        case .yellow: return "黄"
+        case .orange: return "橙"
+        case .black: return "黒"
+        case .white: return "白"
+        }
+    }
+
+    var cgColor: CGColor {
+        switch self {
+        case .red: return CGColor(srgbRed: 0.88, green: 0.08, blue: 0.12, alpha: 1)
+        case .blue: return CGColor(srgbRed: 0.05, green: 0.45, blue: 0.95, alpha: 1)
+        case .green: return CGColor(srgbRed: 0.12, green: 0.68, blue: 0.28, alpha: 1)
+        case .yellow: return CGColor(srgbRed: 0.96, green: 0.76, blue: 0.06, alpha: 1)
+        case .orange: return CGColor(srgbRed: 0.95, green: 0.48, blue: 0.06, alpha: 1)
+        case .black: return CGColor(gray: 0.08, alpha: 1)
+        case .white: return CGColor(gray: 0.98, alpha: 1)
+        }
+    }
+
+    var contrastColor: CGColor {
+        switch self {
+        case .yellow, .white: return CGColor(gray: 0.08, alpha: 1)
+        default: return CGColor(gray: 1, alpha: 1)
+        }
+    }
+
+    var textOnColor: CGColor {
+        switch self {
+        case .yellow, .white: return CGColor(gray: 0.08, alpha: 1)
+        default: return CGColor(gray: 1, alpha: 1)
+        }
+    }
+}
+
 /// Points use the original image's top-left origin, normalized to 0...1.
 struct CaptureAnnotation: Sendable, Identifiable, Equatable {
-    enum Kind: Sendable, Equatable { case comment, arrow, rectangle, number }
+    enum Kind: Sendable, Equatable { case comment, rectangle, freehand, number }
     let id: UUID
     var kind: Kind
     var start: CGPoint
     var end: CGPoint
     var text: String
     var number: Int
+    var color: AnnotationColor
+    var points: [CGPoint]
     init(id: UUID = UUID(), kind: Kind, start: CGPoint, end: CGPoint,
-         text: String = "", number: Int = 1) {
+         text: String = "", number: Int = 1, color: AnnotationColor = .red,
+         points: [CGPoint] = []) {
         self.id = id; self.kind = kind; self.start = start; self.end = end
-        self.text = text; self.number = number
+        self.text = text; self.number = number; self.color = color
+        self.points = points
     }
 }
 
@@ -138,18 +184,24 @@ enum CaptureAnnotationRenderer {
     static func bounds(for annotation: CaptureAnnotation, imageSize: CGSize) throws -> CGRect {
         try validateAnnotation(annotation); try validateSize(imageSize)
         switch annotation.kind {
-        case .comment: return try commentLayout(annotation, size: imageSize).rect
+        case .comment:
+            let layout = try commentLayout(annotation, size: imageSize)
+            return layout.rect.union(CGRect(origin: layout.tailTip, size: .zero))
+                .insetBy(dx: -4, dy: -4)
+                .intersection(CGRect(origin: .zero, size: imageSize))
         case .number: return try numberLayout(annotation, size: imageSize).rect
         case .rectangle:
             return try rectangle(annotation, size: imageSize)
                 .insetBy(dx: -outlineWidth(imageSize) / 2, dy: -outlineWidth(imageSize) / 2)
                 .intersection(CGRect(origin: .zero, size: imageSize))
-        case .arrow:
-            let points = try arrowPoints(annotation, size: imageSize)
-            let minX = points.map(\.x).min()!, maxX = points.map(\.x).max()!
-            let minY = points.map(\.y).min()!, maxY = points.map(\.y).max()!
+        case .freehand:
+            guard !annotation.points.isEmpty else { throw CaptureAnnotationError.invalidAnnotation }
+            let pixelPoints = annotation.points.map { point($0, size: imageSize, inset: 0) }
+            let minX = pixelPoints.map(\.x).min()!, maxX = pixelPoints.map(\.x).max()!
+            let minY = pixelPoints.map(\.y).min()!, maxY = pixelPoints.map(\.y).max()!
+            let stroke = outlineWidth(imageSize)
             return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-                .insetBy(dx: -outlineWidth(imageSize) / 2, dy: -outlineWidth(imageSize) / 2)
+                .insetBy(dx: -stroke, dy: -stroke)
                 .intersection(CGRect(origin: .zero, size: imageSize))
         }
     }
@@ -166,25 +218,30 @@ enum CaptureAnnotationRenderer {
                 switch annotation.kind {
                 case .comment:
                     let layout = try commentLayout(annotation, size: imageSize)
-                    let path = CGPath(roundedRect: layout.rect, cornerWidth: 7, cornerHeight: 7, transform: nil)
-                    context.setFillColor(white); context.addPath(path); context.fillPath()
-                    context.setStrokeColor(red); context.setLineWidth(min(2, min(imageSize.width, imageSize.height) / 4))
-                    context.addPath(path); context.strokePath()
+                    let bubble = createBubblePath(rect: layout.rect, tailTip: layout.tailTip)
+                    context.setFillColor(white); context.addPath(bubble); context.fillPath()
+                    context.setStrokeColor(annotation.color.contrastColor)
+                    context.setLineWidth(min(4, min(imageSize.width, imageSize.height) / 3))
+                    context.addPath(bubble); context.strokePath()
+                    context.setStrokeColor(annotation.color.cgColor)
+                    context.setLineWidth(max(1.5, min(2.5, min(imageSize.width, imageSize.height) / 4)))
+                    context.addPath(bubble); context.strokePath()
                     drawTextFrame(layout.frame, rect: layout.textRect, context: context)
                 case .number:
                     let layout = try numberLayout(annotation, size: imageSize)
-                    context.setFillColor(red); context.fillEllipse(in: layout.rect.insetBy(dx: 1, dy: 1))
-                    context.setStrokeColor(white); context.setLineWidth(2)
+                    context.setFillColor(annotation.color.cgColor); context.fillEllipse(in: layout.rect.insetBy(dx: 1, dy: 1))
+                    context.setStrokeColor(annotation.color.contrastColor); context.setLineWidth(2)
                     context.strokeEllipse(in: layout.rect.insetBy(dx: 1, dy: 1))
                     drawCenteredLine(layout.line, rect: layout.rect, context: context)
                 case .rectangle:
-                    stroke(CGPath(rect: try rectangle(annotation, size: imageSize), transform: nil), context: context, size: imageSize)
-                case .arrow:
-                    let points = try arrowPoints(annotation, size: imageSize)
+                    stroke(CGPath(rect: try rectangle(annotation, size: imageSize), transform: nil), color: annotation.color, context: context, size: imageSize)
+                case .freehand:
+                    guard annotation.points.count >= 2 else { break }
                     let path = CGMutablePath()
-                    path.move(to: points[0]); path.addLine(to: points[1])
-                    path.move(to: points[2]); path.addLine(to: points[1]); path.addLine(to: points[3])
-                    stroke(path, context: context, size: imageSize)
+                    let pixelPoints = annotation.points.map { point($0, size: imageSize, inset: 0) }
+                    path.move(to: pixelPoints[0])
+                    for p in pixelPoints.dropFirst() { path.addLine(to: p) }
+                    stroke(path, color: annotation.color, context: context, size: imageSize)
                 }
             }
         }
@@ -239,7 +296,7 @@ enum CaptureAnnotationRenderer {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
     }
 
-    private struct CommentLayout { let rect: CGRect; let textRect: CGRect; let frame: CTFrame }
+    private struct CommentLayout { let rect: CGRect; let textRect: CGRect; let tailTip: CGPoint; let frame: CTFrame }
     private static func commentLayout(_ annotation: CaptureAnnotation, size: CGSize) throws -> CommentLayout {
         let text = annotation.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw CaptureAnnotationError.emptyComment }
@@ -253,6 +310,10 @@ enum CaptureAnnotationRenderer {
         let framesetter = CTFramesetterCreateWithAttributedString(attributed as CFAttributedString)
         let maxWidth = size.width - margin * 2, maxHeight = size.height - margin * 2
         guard maxWidth > padding * 2, maxHeight > padding * 2 + fontSize else { throw CaptureAnnotationError.commentDoesNotFit }
+
+        let tailTip = point(annotation.start, size: size, inset: margin)
+        var bodyAnchor = point(annotation.end, size: size, inset: margin)
+
         for fraction in [CGFloat(0.42), 0.6, 0.8, 1] {
             let width = min(maxWidth, max(140, size.width * fraction)), innerWidth = width - padding * 2
             let suggested = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: 0),
@@ -260,17 +321,100 @@ enum CaptureAnnotationRenderer {
             guard suggested.height.isFinite, suggested.height >= 0 else { throw CaptureAnnotationError.commentDoesNotFit }
             let innerHeight = ceil(suggested.height) + 2, height = innerHeight + padding * 2
             guard height <= maxHeight else { continue }
-            let anchor = point(annotation.start, size: size, inset: 0)
-            let rect = CGRect(x: clamp(anchor.x, margin, size.width - margin - width),
-                              y: clamp(anchor.y, margin, size.height - margin - height), width: width, height: height)
+
+            if abs(annotation.start.x - annotation.end.x) < 0.001 && abs(annotation.start.y - annotation.end.y) < 0.001 {
+                let preferredY = tailTip.y - height - 24
+                if preferredY >= margin {
+                    bodyAnchor.y = preferredY
+                } else {
+                    bodyAnchor.y = min(size.height - margin - height, tailTip.y + 24)
+                }
+                bodyAnchor.x = clamp(tailTip.x - width / 2, margin, size.width - margin - width)
+            }
+
+            let rect = CGRect(x: clamp(bodyAnchor.x, margin, size.width - margin - width),
+                              y: clamp(bodyAnchor.y, margin, size.height - margin - height), width: width, height: height)
             let textRect = rect.insetBy(dx: padding, dy: padding)
             let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: 0, length: 0),
                 CGPath(rect: CGRect(origin: .zero, size: textRect.size), transform: nil), nil)
             let visible = CTFrameGetVisibleStringRange(frame)
             guard visible.location == 0, visible.length >= attributed.length else { continue }
-            return CommentLayout(rect: rect, textRect: textRect, frame: frame)
+            return CommentLayout(rect: rect, textRect: textRect, tailTip: tailTip, frame: frame)
         }
         throw CaptureAnnotationError.commentDoesNotFit
+    }
+
+    private static func createBubblePath(rect: CGRect, tailTip: CGPoint, radius: CGFloat = 8) -> CGPath {
+        let path = CGMutablePath()
+        if rect.insetBy(dx: -4, dy: -4).contains(tailTip) {
+            path.addRoundedRect(in: rect, cornerWidth: radius, cornerHeight: radius)
+            return path
+        }
+
+        enum Edge { case top, bottom, left, right }
+        let edge: Edge
+        let dxLeft = rect.minX - tailTip.x
+        let dxRight = tailTip.x - rect.maxX
+        let dyTop = rect.minY - tailTip.y
+        let dyBottom = tailTip.y - rect.maxY
+
+        let maxDist = max(dxLeft, dxRight, dyTop, dyBottom)
+        if maxDist == dyBottom { edge = .bottom }
+        else if maxDist == dyTop { edge = .top }
+        else if maxDist == dxLeft { edge = .left }
+        else { edge = .right }
+
+        let tailBaseWidth: CGFloat = min(24, max(12, radius * 2))
+        let halfBase = tailBaseWidth / 2
+
+        path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
+
+        // 上辺
+        if edge == .top {
+            let cx = clamp(tailTip.x, rect.minX + radius + halfBase, rect.maxX - radius - halfBase)
+            path.addLine(to: CGPoint(x: cx + halfBase, y: rect.minY))
+            path.addLine(to: tailTip)
+            path.addLine(to: CGPoint(x: cx - halfBase, y: rect.minY))
+        }
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: rect.minY))
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+                    tangent2End: CGPoint(x: rect.maxX, y: rect.minY + radius), radius: radius)
+
+        // 右辺
+        if edge == .right {
+            let cy = clamp(tailTip.y, rect.minY + radius + halfBase, rect.maxY - radius - halfBase)
+            path.addLine(to: CGPoint(x: rect.maxX, y: cy - halfBase))
+            path.addLine(to: tailTip)
+            path.addLine(to: CGPoint(x: rect.maxX, y: cy + halfBase))
+        }
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addArc(tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+                    tangent2End: CGPoint(x: rect.maxX - radius, y: rect.maxY), radius: radius)
+
+        // 下辺
+        if edge == .bottom {
+            let cx = clamp(tailTip.x, rect.minX + radius + halfBase, rect.maxX - radius - halfBase)
+            path.addLine(to: CGPoint(x: cx - halfBase, y: rect.maxY))
+            path.addLine(to: tailTip)
+            path.addLine(to: CGPoint(x: cx + halfBase, y: rect.maxY))
+        }
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+                    tangent2End: CGPoint(x: rect.minX, y: rect.maxY - radius), radius: radius)
+
+        // 左辺
+        if edge == .left {
+            let cy = clamp(tailTip.y, rect.minY + radius + halfBase, rect.maxY - radius - halfBase)
+            path.addLine(to: CGPoint(x: rect.minX, y: cy + halfBase))
+            path.addLine(to: tailTip)
+            path.addLine(to: CGPoint(x: rect.minX, y: cy - halfBase))
+        }
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + radius))
+        path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY),
+                    tangent2End: CGPoint(x: rect.minX + radius, y: rect.minY), radius: radius)
+
+        path.closeSubpath()
+        return path
     }
 
     private struct NumberLayout { let rect: CGRect; let line: CTLine }
@@ -279,7 +423,7 @@ enum CaptureAnnotationRenderer {
         let font = CTFontCreateWithName("Helvetica-Bold" as CFString, fontSize, nil)
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(annotation.number), attributes: [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
-            NSAttributedString.Key(kCTForegroundColorAttributeName as String): white
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): annotation.color.textOnColor
         ]) as CFAttributedString)
         let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)), radius = ceil(max(fontSize, width / 2 + 6))
         guard radius * 2 + 2 <= min(size.width, size.height) else { throw CaptureAnnotationError.invalidAnnotation }
@@ -307,21 +451,9 @@ enum CaptureAnnotationRenderer {
         guard rect.width >= 1, rect.height >= 1 else { throw CaptureAnnotationError.invalidAnnotation }
         return rect
     }
-    private static func arrowPoints(_ annotation: CaptureAnnotation, size: CGSize) throws -> [CGPoint] {
-        let inset = outlineWidth(size) / 2
-        let start = point(annotation.start, size: size, inset: inset), end = point(annotation.end, size: size, inset: inset)
-        let dx = end.x - start.x, dy = end.y - start.y, length = hypot(dx, dy)
-        guard length >= 1 else { throw CaptureAnnotationError.invalidAnnotation }
-        let ux = dx / length, uy = dy / length
-        let head = min(length * 0.4, max(8, min(24, min(size.width, size.height) / 25)))
-        let left = CGPoint(x: end.x - ux * head - uy * head * 0.55, y: end.y - uy * head + ux * head * 0.55)
-        let right = CGPoint(x: end.x - ux * head + uy * head * 0.55, y: end.y - uy * head - ux * head * 0.55)
-        func bounded(_ p: CGPoint) -> CGPoint { CGPoint(x: clamp(p.x, inset, size.width - inset), y: clamp(p.y, inset, size.height - inset)) }
-        return [start, end, bounded(left), bounded(right)]
-    }
-    private static func stroke(_ path: CGPath, context: CGContext, size: CGSize) {
-        context.addPath(path); context.setStrokeColor(white); context.setLineWidth(outlineWidth(size)); context.strokePath()
-        context.addPath(path); context.setStrokeColor(red); context.setLineWidth(max(0.5, outlineWidth(size) - 2)); context.strokePath()
+    private static func stroke(_ path: CGPath, color: AnnotationColor, context: CGContext, size: CGSize) {
+        context.addPath(path); context.setStrokeColor(color.contrastColor); context.setLineWidth(outlineWidth(size)); context.strokePath()
+        context.addPath(path); context.setStrokeColor(color.cgColor); context.setLineWidth(max(0.5, outlineWidth(size) - 2)); context.strokePath()
     }
     private static func outlineWidth(_ size: CGSize) -> CGFloat { min(min(size.width, size.height), max(3, min(6, min(size.width, size.height) / 80))) }
     private static func point(_ p: CGPoint, size: CGSize, inset: CGFloat) -> CGPoint {
@@ -336,6 +468,10 @@ enum CaptureAnnotationRenderer {
         guard a.start.x.isFinite, a.start.y.isFinite, a.end.x.isFinite, a.end.y.isFinite else { throw CaptureAnnotationError.invalidAnnotation }
         guard a.text.count <= maximumCommentCharacters, a.text.utf16.count <= 2_000 else { throw CaptureAnnotationError.textLimit }
         if a.kind == .number, !(1...999).contains(a.number) { throw CaptureAnnotationError.invalidAnnotation }
+        if a.kind == .freehand {
+            guard a.points.count >= 2, a.points.count <= 2_000,
+                  a.points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { throw CaptureAnnotationError.invalidAnnotation }
+        }
     }
     private static func validateSize(_ size: CGSize) throws {
         guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 else { throw M0ImageError.invalidMetrics }

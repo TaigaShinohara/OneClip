@@ -15,6 +15,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     @Published private(set) var image: M0ImageAsset?
     @Published private(set) var annotations: [CaptureAnnotation] = []
     @Published var tool: CaptureAnnotation.Kind? = .comment
+    @Published var selectedColor: AnnotationColor = .red
     @Published private(set) var selectedID: UUID?
     @Published var commentDraft = ""
     @Published private(set) var pendingCommentPoint: CGPoint?
@@ -102,7 +103,11 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         }
         if isOpen {
             guard environmentCheck() else { invalidate(); return false }
-            showWindow(); return true
+            if isDirty {
+                guard requestClose() else { return false }
+            } else {
+                invalidate()
+            }
         }
         guard !isWorking, !results.isSaving, !results.hasPendingSave, canOpen(), environmentCheck() else {
             statusText = "撮影中または未解決の画像があります。先に処理を終えてください。"
@@ -171,16 +176,24 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             selectedID = nil
             pendingCommentPoint = clamped(start)
             commentDraft = ""
-            statusText = "右の欄へAIへの指示を書き、「コメントを適用」を押してください。"
+            statusText = "右の欄へコメントを入力し、「コメントを適用」を押してください。"
             return
         }
-        if tool == .arrow || tool == .rectangle {
+        if tool == .rectangle {
             guard abs(start.x - end.x) + abs(start.y - end.y) > 0.005 else {
-                statusText = "画像の上をドラッグして記号を描いてください。"; return
+                statusText = "画像の上をドラッグして四角で囲んでください。"; return
             }
+            var note = CaptureAnnotation(kind: .rectangle, start: clamped(start), end: clamped(end), color: selectedColor)
+            do {
+                note = try canonicalized(note)
+                try commit(annotations + [note])
+                selectID(note.id)
+                self.tool = nil
+            } catch { statusText = Self.failureText(error) }
+            return
         }
         let number = (annotations.filter { $0.kind == .number }.map(\.number).max() ?? 0) + 1
-        var note = CaptureAnnotation(kind: tool, start: clamped(start), end: clamped(end), number: number)
+        var note = CaptureAnnotation(kind: tool, start: clamped(start), end: clamped(end), number: number, color: selectedColor)
         do {
             note = try canonicalized(note)
             try commit(annotations + [note])
@@ -188,7 +201,34 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         } catch { statusText = Self.failureText(error) }
     }
 
-    func applyComment() { _ = finishDraft() }
+    func addFreehand(points: [CGPoint]) {
+        guard editable(), finishDraft(), points.count >= 2 else { return }
+        let clampedPoints = points.map(clamped)
+        var note = CaptureAnnotation(kind: .freehand, start: clampedPoints.first!, end: clampedPoints.last!,
+                                     color: selectedColor, points: clampedPoints)
+        do {
+            note = try canonicalized(note)
+            try commit(annotations + [note])
+            selectID(note.id)
+            self.tool = nil
+        } catch { statusText = Self.failureText(error) }
+    }
+
+    func setColor(_ color: AnnotationColor) {
+        selectedColor = color
+        guard editable(), let selectedID, let index = annotations.firstIndex(where: { $0.id == selectedID }) else { return }
+        var next = annotations
+        next[index].color = color
+        do {
+            try commit(next)
+        } catch { statusText = Self.failureText(error) }
+    }
+
+    func applyComment() {
+        if finishDraft() {
+            tool = nil
+        }
+    }
     func cancelComment() {
         pendingCommentPoint = nil
         commentDraft = selectedAnnotation?.kind == .comment ? selectedAnnotation?.text ?? "" : ""
@@ -204,7 +244,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         }
         do {
             if let point = pendingCommentPoint {
-                var note = CaptureAnnotation(kind: .comment, start: point, end: point, text: text)
+                var note = CaptureAnnotation(kind: .comment, start: point, end: point, text: text, color: selectedColor)
                 note = try canonicalized(note)
                 try commit(annotations + [note])
                 pendingCommentPoint = nil
@@ -216,7 +256,7 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
                 try commit(next)
                 commentDraft = next[index].text
             }
-            statusText = "コメントを追加しました。必要な記号を加えて「保存してコピー」できます。"
+            statusText = "コメントを追加しました。「保存してコピー」できます。"
             return true
         } catch { statusText = Self.failureText(error); return false }
     }
@@ -243,6 +283,24 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             var next = annotations
             next[index].start.x += dx; next[index].end.x += dx
             next[index].start.y += dy; next[index].end.y += dy
+            if next[index].kind == .freehand {
+                next[index].points = next[index].points.map {
+                    CGPoint(x: min(max($0.x + dx, 0), 1), y: min(max($0.y + dy, 0), 1))
+                }
+            }
+            next[index] = try canonicalized(next[index])
+            try validate(next)
+            annotations = next
+        } catch { statusText = Self.failureText(error) }
+    }
+
+    func moveSelectedTail(by delta: CGPoint) {
+        guard editable(), let _ = image, let index = annotations.firstIndex(where: { $0.id == selectedID }),
+              annotations[index].kind == .comment, delta.x.isFinite, delta.y.isFinite else { return }
+        do {
+            var next = annotations
+            next[index].start.x = min(max(next[index].start.x + delta.x, 0), 1)
+            next[index].start.y = min(max(next[index].start.y + delta.y, 0), 1)
             next[index] = try canonicalized(next[index])
             try validate(next)
             annotations = next
@@ -401,7 +459,6 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
         var note = note
         let size = CGSize(width: image.image.width, height: image.image.height)
         let bounds = try CaptureAnnotationRenderer.bounds(for: note, imageSize: size)
-        if note.kind == .comment { note.start = CGPoint(x: bounds.minX / size.width, y: bounds.minY / size.height) }
         if note.kind == .number { note.start = CGPoint(x: bounds.midX / size.width, y: bounds.midY / size.height) }
         return note
     }
@@ -421,7 +478,12 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
     }
     private func selectID(_ id: UUID?) {
         selectedID = id; pendingCommentPoint = nil
-        commentDraft = selectedAnnotation?.kind == .comment ? selectedAnnotation?.text ?? "" : ""
+        if let selected = selectedAnnotation {
+            commentDraft = selected.kind == .comment ? selected.text : ""
+            selectedColor = selected.color
+        } else {
+            commentDraft = ""
+        }
     }
     private func showWindow() {
         guard showsWindow else { return }

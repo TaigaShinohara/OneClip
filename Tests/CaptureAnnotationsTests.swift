@@ -79,7 +79,8 @@ struct CaptureAnnotationsTests {
         let before = try bytes(source)
         let kinds: [CaptureAnnotation] = [
             .init(kind: .comment, start: CGPoint(x: 0.12, y: 0.1), end: .zero, text: "ここを修正してください\n余白を広くする"),
-            .init(kind: .arrow, start: CGPoint(x: 0.15, y: 0.2), end: CGPoint(x: 0.82, y: 0.78)),
+            .init(kind: .freehand, start: CGPoint(x: 0.15, y: 0.2), end: CGPoint(x: 0.82, y: 0.78),
+                  points: [CGPoint(x: 0.15, y: 0.2), CGPoint(x: 0.4, y: 0.5), CGPoint(x: 0.82, y: 0.78)]),
             .init(kind: .rectangle, start: CGPoint(x: 0.1, y: 0.1), end: CGPoint(x: 0.85, y: 0.85)),
             .init(kind: .number, start: CGPoint(x: 0.5, y: 0.5), end: .zero, number: 12)
         ]
@@ -117,7 +118,7 @@ struct CaptureAnnotationsTests {
     }
     static func testValidation(_ image: CGImage) throws {
         let bad: [CaptureAnnotation] = [
-            .init(kind: .arrow, start: CGPoint(x: CGFloat.nan, y: 0), end: CGPoint(x: 1, y: 1)),
+            .init(kind: .freehand, start: CGPoint(x: CGFloat.nan, y: 0), end: CGPoint(x: 1, y: 1), points: [CGPoint(x: CGFloat.nan, y: 0)]),
             .init(kind: .comment, start: .zero, end: .zero, text: "   \n "),
             .init(kind: .comment, start: .zero, end: .zero, text: String(repeating: "字", count: 501)),
             .init(kind: .number, start: .zero, end: .zero, number: 0),
@@ -145,7 +146,7 @@ struct CaptureAnnotationsTests {
     }
     static func testCancellation(_ image: CGImage) throws {
         let original = try bytes(image)
-        let note = CaptureAnnotation(kind: .arrow, start: CGPoint(x: 0.1, y: 0.1), end: CGPoint(x: 0.8, y: 0.8))
+        let note = CaptureAnnotation(kind: .rectangle, start: CGPoint(x: 0.1, y: 0.1), end: CGPoint(x: 0.8, y: 0.8))
         let checkpoints = Checkpoints()
         try expectError {
             _ = try CaptureAnnotationRenderer.render(image: image, annotations: [note]) {

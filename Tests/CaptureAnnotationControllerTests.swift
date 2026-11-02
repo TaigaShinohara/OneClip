@@ -167,11 +167,20 @@ struct CaptureAnnotationControllerTests {
         try await h.load()
         h.draft("最初の指示")
         h.controller.applyComment()
+        try expect(h.controller.tool == nil, "Applying comment did not switch to selection mode")
         let id = h.controller.annotations[0].id
         h.controller.commentDraft = "改稿した指示\n位置も動かす"
         h.controller.applyComment()
         try expect(h.controller.annotations[0].id == id && h.controller.annotations[0].text.contains("改稿"),
                    "Re-editing changed the annotation identity or lost the text")
+        try expect(h.controller.annotations[0].color == .red, "Default color was not red")
+        h.controller.setColor(.blue)
+        try expect(h.controller.annotations[0].color == .blue, "Color change was not reflected")
+        let beforeTailMove = h.controller.annotations[0].start
+        h.controller.beginMove()
+        h.controller.moveSelectedTail(by: CGPoint(x: 0.05, y: 0.05))
+        h.controller.endMove()
+        try expect(h.controller.annotations[0].start != beforeTailMove, "Tail movement did not change start coordinate")
         let beforeMove = h.controller.annotations
         h.controller.beginMove()
         h.controller.moveSelected(by: CGPoint(x: 0.1, y: 0.05))
@@ -187,10 +196,22 @@ struct CaptureAnnotationControllerTests {
         let bounds = try CaptureAnnotationRenderer.bounds(for: h.controller.annotations[0], imageSize: CGSize(width: 1000, height: 600))
         h.controller.select(at: CGPoint(x: bounds.midX / 1000, y: bounds.midY / 600))
         try expect(h.controller.selectedID == id, "Hit testing did not select the comment")
+
+        // Freehand and rectangle tool switching test
+        h.controller.tool = .rectangle
+        h.controller.gesture(from: CGPoint(x: 0.2, y: 0.2), to: CGPoint(x: 0.4, y: 0.4))
+        try expect(h.controller.tool == nil, "Creating rectangle did not switch to selection mode")
+        try expect(h.controller.annotations.count == 2, "Rectangle was not added")
+
+        h.controller.tool = .freehand
+        h.controller.addFreehand(points: [CGPoint(x: 0.5, y: 0.5), CGPoint(x: 0.55, y: 0.55), CGPoint(x: 0.6, y: 0.5)])
+        try expect(h.controller.tool == nil, "Creating freehand did not switch to selection mode")
+        try expect(h.controller.annotations.count == 3 && h.controller.annotations[2].kind == .freehand, "Freehand was not added")
+
         h.controller.deleteSelected()
-        try expect(h.controller.annotations.isEmpty, "Selected comment was not deleted")
+        try expect(h.controller.annotations.count == 2, "Selected freehand was not deleted")
         h.controller.undo()
-        try expect(h.controller.annotations == afterMove, "Undo did not restore the deleted comment")
+        try expect(h.controller.annotations.count == 3, "Undo did not restore the deleted freehand")
         h.controller.invalidate()
     }
     static func testPartialFailures(_ root: URL) async throws {
@@ -578,8 +599,7 @@ struct CaptureAnnotationControllerTests {
         try await h.load()
         h.controller.tool = .rectangle
         h.controller.gesture(from: CGPoint(x: 0.07, y: 0.3), to: CGPoint(x: 0.4, y: 0.76))
-        h.controller.tool = .arrow
-        h.controller.gesture(from: CGPoint(x: 0.6, y: 0.7), to: CGPoint(x: 0.34, y: 0.45))
+        h.controller.addFreehand(points: [CGPoint(x: 0.6, y: 0.7), CGPoint(x: 0.5, y: 0.6), CGPoint(x: 0.34, y: 0.45)])
         h.controller.tool = .number
         h.controller.gesture(from: CGPoint(x: 0.11, y: 0.2), to: CGPoint(x: 0.11, y: 0.2))
         h.draft("① 囲んだ説明文を短くする\n② 余白を少し広くしてください", at: CGPoint(x: 0.5, y: 0.1))
