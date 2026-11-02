@@ -2,7 +2,7 @@
 
 OneClipメニューと設定の「アップデートを確認…」から更新を確認します。起動時・定期的な確認、自動ダウンロード・自動インストール、システムプロファイル送信は行いません。確認・取得の通信には、固定のGitHubフィードと、そのフィードにあるOneClipの配布ZIPだけを使います。画像・コメント・クリップボードは送信しません。
 
-現在は0.2.0／build 2の更新機能を準備中です。公開された更新用Release、初回切り替え、2版間の実更新はまだ成立していません。ソース実装・内部試験・署名・公証・配布・インストールの結果を区別し、未設定・404・取得失敗を「最新版」と扱いません。
+初回の更新用公開版は[0.2.0／build 2](https://github.com/TaigaShinohara/OneClip/releases/tag/v0.2.0)です。署名・公証・チケット添付済みのZIPと署名付きフィードを公開しています。初回配置と製品版同士の実更新は別の受入項目で、2版間の製品実更新は未実証です。ソース実装・内部試験・署名・公証・配布・インストールの結果を区別し、未設定・404・取得失敗を「最新版」と扱いません。
 
 ## 利用するチャンネル
 
@@ -73,4 +73,17 @@ M4総合、対象Collection VoiceOver、表示・IMEなどの未実証は継続�
 - 公開履歴の内容監査は追加した外部package参照を要レビューとして検出しました。Sparkle 2.10.1の固定revision、公式SPM配布checksum、ライセンス全文と既知同梱コードを確認して採用しています。外部依存がなくなったという判定や全面的な脆弱性監査の合格には置き換えません。
 - 上記の実更新fixtureは独自user driverを使います。製品のforwarding driver、編集の保留・取消、通常終了の表示や人間による操作体験の実証へは拡張しません。製品adapterのセッション・チャンネル認可、延期、最終gate、lockはソースレビューと架空サービスの試験で確認しています。
 
-公開feedからの製品版の取得、初回配置、製品版同士の実更新、macOS 14／Intel実機、UI・IME・VoiceOverの追加確認は未実施です。一般向け配布の承認やM4総合合格の記録ではありません。
+候補作成時点では、公開feedからの製品版の取得、初回配置、製品版同士の実更新、macOS 14／Intel実機、UI・IME・VoiceOverの追加確認は未実施でした。一般向け配布の承認やM4総合合格の記録ではありません。
+
+
+## 0.2.0の初回公開
+
+0.2.0／build 2の署名済み候補について、Apple公証のAcceptedと審査logのアーカイブhash一致・指摘0件を確認しました。同じコードへticketをstapleし、appと最終ZIP再展開物の両方で専用distribution preflightが成功しました。全CPUの署名・権限・Hardened Runtime・timestamp、staple、GatekeeperのNotarized Developer ID判定、app manifest一致を含みます。
+
+公開物は[GitHub Release v0.2.0](https://github.com/TaigaShinohara/OneClip/releases/tag/v0.2.0)です。tagのソースは`66b018bd553e82fcc2bac7d3ae01e97bba11847c`、製品コードの由来は`0f07430a5b953a35f85d4d98bbe41c5e3e175406`で、ビルド前に固定した42製品入力のbytesは両commitで一致します。
+
+- `OneClip-0.2.0.zip`: 2,502,156 bytes。SHA256 `e3e49aa00617d8cae82c916fe82df7b48a3bbf81ab868d78eba0c8e4664c06ab`。
+- 初回の`updates/appcast.xml`: 1,188 bytes。SHA256 `e11f6bd4d12a6300a632a516d4ffaf5cdcba012c96010c3b859c9d5d6fd69b1c`。新しいitemを追加した後はfeedのhashが変わります。
+- appに同梱した公開鍵だけを使い、最終ZIPの全bytesとSparkle 2.10.1の署名block抽出仕様に対応するfeedのEd25519署名を別々に検証しました。公開URLからZIPを再取得して、HTTP 200・長さ・hash・アーカイブ署名の一致も確認しました。
+
+これは署名・公証・初回配布物の個別検証です。初回の手動配置、製品UIの操作、製品版同士の更新・rollback、offline起動、macOS 14／Intel実機などの受入へ拡張しません。M4総合と対象Collection VoiceOverの保留は継続します。保存画像・設定・権限やGatekeeperの設定を変更して公開を成立させていません。

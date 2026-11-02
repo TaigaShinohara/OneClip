@@ -1,0 +1,18 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>OneClip</title>
+        <item>
+            <title>0.2.0</title>
+            <pubDate>Mon, 02 Nov 2026 12:06:07 +0900</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/TaigaShinohara/OneClip/releases/download/v0.2.0/OneClip-0.2.0.zip" length="2502156" type="application/octet-stream" sparkle:edSignature="w+3oaFE+8Of174vIl9/gZ+X06FchoVU5Nii7VKR4V5e72yscOS1p8IvkI3WxZlyISMt+ZP1qFO5tZSWCd5xYCg=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: SHBSH3SJ9PxRkKgOC+gEPffJQTtOMRiu5WfG6+gW4+b8UbSmr09YlG247rJAOk6OnOGunt1ZjmgR5u7Wab2zCA==
+length: 1044
+-->
