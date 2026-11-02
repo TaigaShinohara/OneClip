@@ -37,7 +37,7 @@ struct OneClipApp: App {
     @StateObject private var updates = AppUpdateController.shared
     var body: some Scene {
         MenuBarExtra {
-            Text("OneClip — まとめ撮りbeta 開発中")
+            Text("OneClip — 必要なところを、ひと貼り")
             #if DEBUG
             if M2FailureLab.isEnabled || M3FailureLab.isEnabled { Text("安全な試験モード・一般コピーなし") }
             #endif

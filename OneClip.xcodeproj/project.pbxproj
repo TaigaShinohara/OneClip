@@ -4,11 +4,13 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+		A40000000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A40000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001; };
 		A30000000000000000000004 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
 		A30000000000000000000005 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000004; };
 		A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 		A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001; };
-		A30000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */, A30000000000000000000005 /* LICENSE in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+		A30000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A40000000000000000000002 /* Assets.xcassets in Resources */, A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */, A30000000000000000000005 /* LICENSE in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 		A20000000000000000000001 /* Sparkle */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.1; }; };
 		A20000000000000000000002 /* Sparkle */ = {isa = XCSwiftPackageProductDependency; package = A20000000000000000000001; productName = Sparkle; };
 		A20000000000000000000003 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* Sparkle */; };
@@ -87,7 +89,7 @@
 		};
 		100000000000000000000005 /* OneClip */ = {
 			isa = PBXGroup;
-			children = (A10000000000000000000005 /* AppUpdateViews.swift */, A10000000000000000000003 /* AppUpdateController.swift */, A10000000000000000000001 /* AppUpdateModel.swift */, 900000000000000000000001 /* CaptureSecurityTrace.swift */, 900000000000000000000003 /* CaptureEnvironmentRouter.swift */, 900000000000000000000005 /* TrustedPreviewApplication.swift */, 800000000000000000000005 /* CaptureAnnotationEditor.swift */, 800000000000000000000003 /* CaptureAnnotationController.swift */, 800000000000000000000001 /* CaptureAnnotations.swift */, 700000000000000000000003 /* CaptureResultController.swift */, 700000000000000000000001 /* CaptureArchive.swift */, 600000000000000000000001 /* OneClipStyle.swift */, 500000000000000000000007 /* M3PracticeFixture.swift */, 500000000000000000000005 /* M3FailureLab.swift */, 500000000000000000000003 /* CollectionPanel.swift */, 500000000000000000000001 /* CollectionCaptureCoordinator.swift */, 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */, 400000000000000000000009 /* CaptureSessionMonitor.swift */, 400000000000000000000001 /* ProductHotKey.swift */, 400000000000000000000003 /* CapturePreferences.swift */, 400000000000000000000005 /* CaptureSettings.swift */, 400000000000000000000007 /* M2FailureLab.swift */, 300000000000000000000001 /* RegionGeometry.swift */, 300000000000000000000003 /* ScreenshotService.swift */, 300000000000000000000005 /* SingleCaptureCoordinator.swift */, 300000000000000000000007 /* NativeCaptureInterface.swift */, 200000000000000000000001 /* M0ImageCore.swift */, 200000000000000000000003 /* M0ClipboardProbe.swift */, 200000000000000000000005 /* M0HotKeyProbe.swift */, 200000000000000000000007 /* M0Lab.swift */, 200000000000000000000009 /* M0RuntimeChecks.swift */, 100000000000000000000001 /* OneClipApp.swift */, 100000000000000000000017 /* Info.plist */, 100000000000000000000018 /* OneClip.entitlements */);
+			children = (A40000000000000000000001 /* Assets.xcassets */, A10000000000000000000005 /* AppUpdateViews.swift */, A10000000000000000000003 /* AppUpdateController.swift */, A10000000000000000000001 /* AppUpdateModel.swift */, 900000000000000000000001 /* CaptureSecurityTrace.swift */, 900000000000000000000003 /* CaptureEnvironmentRouter.swift */, 900000000000000000000005 /* TrustedPreviewApplication.swift */, 800000000000000000000005 /* CaptureAnnotationEditor.swift */, 800000000000000000000003 /* CaptureAnnotationController.swift */, 800000000000000000000001 /* CaptureAnnotations.swift */, 700000000000000000000003 /* CaptureResultController.swift */, 700000000000000000000001 /* CaptureArchive.swift */, 600000000000000000000001 /* OneClipStyle.swift */, 500000000000000000000007 /* M3PracticeFixture.swift */, 500000000000000000000005 /* M3FailureLab.swift */, 500000000000000000000003 /* CollectionPanel.swift */, 500000000000000000000001 /* CollectionCaptureCoordinator.swift */, 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */, 400000000000000000000009 /* CaptureSessionMonitor.swift */, 400000000000000000000001 /* ProductHotKey.swift */, 400000000000000000000003 /* CapturePreferences.swift */, 400000000000000000000005 /* CaptureSettings.swift */, 400000000000000000000007 /* M2FailureLab.swift */, 300000000000000000000001 /* RegionGeometry.swift */, 300000000000000000000003 /* ScreenshotService.swift */, 300000000000000000000005 /* SingleCaptureCoordinator.swift */, 300000000000000000000007 /* NativeCaptureInterface.swift */, 200000000000000000000001 /* M0ImageCore.swift */, 200000000000000000000003 /* M0ClipboardProbe.swift */, 200000000000000000000005 /* M0HotKeyProbe.swift */, 200000000000000000000007 /* M0Lab.swift */, 200000000000000000000009 /* M0RuntimeChecks.swift */, 100000000000000000000001 /* OneClipApp.swift */, 100000000000000000000017 /* Info.plist */, 100000000000000000000018 /* OneClip.entitlements */);
 			path = OneClip;
 			sourceTree = "<group>";
 		};
@@ -179,6 +181,7 @@
 		100000000000000000000015 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = OneClip/OneClipDebug.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
@@ -188,8 +191,8 @@
 				INFOPLIST_FILE = OneClip/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				MARKETING_VERSION = 0.2.0;
-				CURRENT_PROJECT_VERSION = 2;
+				MARKETING_VERSION = 1.0.0;
+				CURRENT_PROJECT_VERSION = 3;
 				ONECLIP_UPDATE_CHANNEL = stable;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 			};
@@ -201,6 +204,7 @@
 				DEPLOYMENT_POSTPROCESSING = YES;
 				STRIP_INSTALLED_PRODUCT = YES;
 				STRIP_STYLE = debugging;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = OneClip/OneClip.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
@@ -210,8 +214,8 @@
 				INFOPLIST_FILE = OneClip/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				MARKETING_VERSION = 0.2.0;
-				CURRENT_PROJECT_VERSION = 2;
+				MARKETING_VERSION = 1.0.0;
+				CURRENT_PROJECT_VERSION = 3;
 				ONECLIP_UPDATE_CHANNEL = stable;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 			};
