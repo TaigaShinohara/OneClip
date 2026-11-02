@@ -60,7 +60,7 @@ macOS 14以降を対象とするApple Silicon／Intelのuniversal版です。最
 
 未保存の画像・コメント・収集素材がある場合も、確認だけは行えます。適用は保存や編集の確定後に行い、撮影・画像処理・確認ダイアログの途中では待機します。更新情報の取得失敗や未公開の状態を「最新版」とは表示しません。
 
-更新機能がない既存アプリには、最初だけ更新機能入りのアプリを手動で配置する必要があります。公開用の署名・公証済みアプリは[GitHub Releases](https://github.com/TaigaShinohara/OneClip/releases)から取得できます。製品版同士の実更新は未実証です。仕組みと公開手順は[手動アップデート](docs/UPDATES.md)を参照してください。
+更新機能がない既存アプリには、最初だけ更新機能入りのアプリを手動で配置する必要があります。公開用の署名・公証済みアプリは[GitHub Releases](https://github.com/TaigaShinohara/OneClip/releases)から取得できます。0.2.0から1.0.0への製品版同士の実更新を確認しています。仕組みと公開手順は[手動アップデート](docs/UPDATES.md)を参照してください。
 
 ## 困ったとき
 
@@ -119,7 +119,8 @@ xcodebuild -project OneClip.xcodeproj -scheme OneClip \
 
 ## 検証状況
 
-Apple SiliconのmacOS環境で限定的に確認しています。
+1.0.0はApple Silicon / macOS 27.2で、公開に必要な最小確認を完了しました。署名・公証・公開先の照合、0.2.0からのアプリ内更新・再起動・データと設定の保持を確認しています。[結果と限定条件](docs/RELEASE-1.0.0.md)を参照してください。
+基本の撮影・まとめ撮り・注釈・保存ロジックは0.2.0から変えておらず、有効な既存結果を継承しています。
 M2「単発alpha」とM3「まとめ撮りbeta」は、記録された版・環境・対象範囲で限定完了しました。
 M3の対象Collection VoiceOverは未実証のまま持ち越しています。
 
@@ -127,7 +128,7 @@ M4の追加評価と対象Collection VoiceOverは保留です。個別に報告�
 最小対象OSの実機、Intel Mac、全面的なVoiceOver対応、全表示構成・貼付け先、厳密な画質・性能は未確認です。
 一部の取得失敗の原因は未確定です。公開文書の整理によって製品の未解決事項が解消したとは扱いません。
 
-手動更新は実SDKでのuniversal Releaseビルド、関連Swift回帰172グループ、Python279件、専用テストアプリでの正常更新・再起動／不正署名拒否を確認しています。署名・公証・初回配布と公開ZIPの再取得も確認しています。製品版同士の実更新とUIの実操作は未実証です。[限定検証の詳細](docs/UPDATES.md#2026-11-02の限定検証)を参照してください。
+手動更新は実SDKでのuniversal Releaseビルド、関連Swift回帰172グループ、Python279件、専用テストアプリでの正常更新・再起動／不正署名拒否を確認しています。署名・公証・初回配布と公開ZIPの再取得も確認しています。1.0.0では製品版同士の実更新と版表示を確認しました。全面的なUI・IME・VoiceOver評価とは区別します。[限定検証の詳細](docs/UPDATES.md#2026-11-02の限定検証)を参照してください。
 
 検証の根拠と残件は [M0](docs/M0-VERIFICATION.md)、[M1](docs/M1-VERIFICATION.md)、[M2](docs/M2-VERIFICATION.md)、[M3](docs/M3-VERIFICATION.md)、[M4](docs/M4-VERIFICATION.md) を参照してください。
 公開の検証要約には技術的な結果・限定条件・失敗・未実証を記載します。
