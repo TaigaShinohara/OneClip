@@ -68,6 +68,9 @@ M4総合、対象Collection VoiceOver、表示・IMEなどの未実証は継続�
 - Pythonの架空fixture検証279件が成功しました。このうち更新用の配布物policyは12件です。既存の単一executable用policyは変更していません。
 - Swiftの関連回帰8スイート・172グループが成功しました。更新モデル9、環境ルート14、ショートカット30、設定5、注釈controller14、結果controller14、単発coordinator43、まとめ撮りcoordinator43です。実画面・一般pasteboardは使っていません。
 - 別bundle IDの署名済みSandboxテストアプリで、署名付きローカルfeedからの正常更新・再起動と、架空の保存データ／設定の保持を確認しました。不正なアーカイブ署名はSparkleの署名エラーで拒否され、旧appのmanifestが不変でした。OS保護設定は変更していません。
+- 0.2.0／build 2の専用候補をDeveloper IDで署名し、既知6code ownerの両CPU sliceに対する署名・Hardened Runtime・権限の専用preflightが成功しました。ZIP再展開後の同じpreflightとapp manifest一致も確認しました。公証提出・staple・公開・初回配置は未実施です。
+- 同候補のアーカイブ署名と署名付きappcastを、Keychainの既定アカウントでローカル生成・検証しました。予定先はGitHub Releaseのv0.2.0です。公証後のstapleでbytesが変わるため、配布前にZIP・hash・署名・feedを作り直します。候補feedは公開していません。
+- 公開履歴の内容監査は追加した外部package参照を要レビューとして検出しました。Sparkle 2.10.1の固定revision、公式SPM配布checksum、ライセンス全文と既知同梱コードを確認して採用しています。外部依存がなくなったという判定や全面的な脆弱性監査の合格には置き換えません。
 - 上記の実更新fixtureは独自user driverを使います。製品のforwarding driver、編集の保留・取消、通常終了の表示や人間による操作体験の実証へは拡張しません。製品adapterのセッション・チャンネル認可、延期、最終gate、lockはソースレビューと架空サービスの試験で確認しています。
 
 公開feedからの製品版の取得、初回配置、製品版同士の実更新、macOS 14／Intel実機、UI・IME・VoiceOverの追加確認は未実施です。一般向け配布の承認やM4総合合格の記録ではありません。
