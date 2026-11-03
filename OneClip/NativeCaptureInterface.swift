@@ -975,12 +975,17 @@ private struct CaptureGuideInstructions: View {
 /// Expanding this explanation does not change capture, save, or acknowledgement policy.
 struct CaptureDataNotice: View {
     var isActionDisabled = false
+    var title = "保存とデータの扱い"
+    var includesPermissionNotice = false
     var contentSizeChanged: () -> Void = {}
     @State private var showsDetails = false
 
     var body: some View {
-        DisclosureGroup("保存とデータの扱い", isExpanded: $showsDetails) {
+        DisclosureGroup(title, isExpanded: $showsDetails) {
             VStack(alignment: .leading, spacing: 10) {
+                if includesPermissionNotice {
+                    Text("撮影に必要な場合だけ画面収録の許可を案内します。")
+                }
                 Text("撮影原本・注釈入りPNG・標準「プレビュー」用の編集コピーは、終了・ロック・素材の破棄後も残ります。自動削除は行いません。")
                 Text("保存先はこのアプリ専用のフォルダです。不要な画像は保存フォルダで管理してください。")
                 Button("保存フォルダを開く") { CaptureResultController.shared.openFolder() }
@@ -1021,11 +1026,12 @@ struct CaptureGuideView: View {
     }
 }
 
-private struct CaptureUsageGuideView: View {
+struct CaptureUsageGuideView: View {
     let closed: (Set<Bool>) -> Void
     let contentSizeChanged: () -> Void
     @State private var collection: Bool
     @State private var viewedModes: Set<Bool>
+    @State private var showsOperationDetails = false
 
     init(collection: Bool = false, closed: @escaping (Set<Bool>) -> Void,
          contentSizeChanged: @escaping () -> Void = {}) {
@@ -1037,23 +1043,73 @@ private struct CaptureUsageGuideView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            OneClipHeading(title: "OneClipの使い方", subtitle: "必要なところを集めて、ひと貼り",
-                           systemName: "viewfinder", tone: .neutral)
-            Text("画面上端のOneClipメニューから、二つの撮影を使えます。キーは「設定…」で任意に設定できます。")
-                .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 14) {
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 25, weight: .medium))
+                    .foregroundStyle(.secondary).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("OneClipの使い方").font(.title2.weight(.semibold))
+                    Text("必要なところを集めて、ひと貼り")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            Text("画面上部のOneClipメニューから撮影できます。\nキーは「設定…」で設定・変更できます。")
+                .font(.callout).foregroundStyle(.secondary)
+                .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
             Picker("撮影の使い方", selection: $collection) {
                 Text("範囲をコピー").tag(false)
                 Text("集めてコピー").tag(true)
             }
-            .pickerStyle(.segmented)
-            CaptureGuideInstructions(collection: collection)
-            CaptureDataNotice(contentSizeChanged: contentSizeChanged)
-            Text("この案内は、メニューや設定の「使い方…」からいつでも見返せます。")
-                .font(.callout).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Spacer()
-                Button("使い方を確認しました") { closed(viewedModes.union([collection])) }
+            .pickerStyle(.segmented).labelsHidden()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text(collection ? "集めて、一枚に" : "ドラッグして、離すだけ")
+                    .font(.title3.weight(.semibold))
+                Text(collection
+                     ? "1つの画面内で範囲を選び、最大4枚を追加します。"
+                     : "1つの画面内で範囲を選択。離すとコピー・保存します。")
+                CaptureUsageDiagram(collection: collection)
+                    .frame(height: 82).frame(maxWidth: .infinity)
+                    .accessibilityHidden(true)
+                if collection {
+                    Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
+                }
+                Text("右下のプレビューからコメントや記号を追加できます。")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.callout).lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .oneClipCard(padding: 18)
+
+            VStack(alignment: .leading, spacing: 12) {
+                DisclosureGroup(collection ? "操作と素材の扱い" : "キーボードでの操作",
+                                isExpanded: $showsOperationDetails) {
+                    operationDetails.padding(.top, 10)
+                }
+                Divider()
+                CaptureDataNotice(title: "保存・権限の詳細", includesPermissionNotice: true,
+                                  contentSizeChanged: contentSizeChanged)
+            }
+            .font(.callout)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Label(collection
+                      ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
+                      : "確定すると、今のクリップボードを置き換えます。",
+                      systemImage: "doc.on.clipboard")
+                Label("完成画像はこのMacに自動保存されます。\n終了・ロック後も残り、保存期限はありません。",
+                      systemImage: "internaldrive")
+            }
+            .font(.callout).lineSpacing(3)
+            .fixedSize(horizontal: false, vertical: true)
+
+            Divider()
+            HStack(alignment: .center, spacing: 16) {
+                Text("使い方はメニュー・設定からいつでも確認できます。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("わかりました") { closed(viewedModes.union([collection])) }
                     .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
             }
             .buttonBorderShape(.capsule).controlSize(.large)
@@ -1063,6 +1119,85 @@ private struct CaptureUsageGuideView: View {
         .onChange(of: collection) { _, value in
             viewedModes.insert(value)
             contentSizeChanged()
+        }
+        .onChange(of: showsOperationDetails) { _, _ in contentSizeChanged() }
+    }
+
+    private var operationDetails: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("矢印で範囲を作成・移動し、Shift + 矢印で大きさを変えます。Enterで確定、Escapeで取り消せます。")
+            if collection {
+                Text("範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。")
+                Text("取り直しは、新しい範囲を確認してから差し替えます。途中で取り消すと旧素材を残します。")
+                Text("収集パネルを閉じても素材は残ります。未コピーの素材・変更の破棄や、未コピー画像を残して終了する時は確認します。")
+                Text("スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。保存済みの完成画像は残ります。")
+            }
+        }
+        .font(.callout).foregroundStyle(.secondary).lineSpacing(3)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// A schematic made entirely from shapes; it never reads a screen or a captured image.
+private struct CaptureUsageDiagram: View {
+    let collection: Bool
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    private var accent: Color { (collection ? OneClipTone.collection : .single).color(for: colorScheme) }
+    private var outline: Color { .primary.opacity(contrast == .increased ? 0.65 : 0.25) }
+
+    var body: some View {
+        HStack(spacing: 20) {
+            if collection {
+                HStack(alignment: .center, spacing: 6) {
+                    ForEach(1..<4) { number in
+                        VStack(spacing: 5) {
+                            Text("\(number)").font(.caption2.monospacedDigit())
+                            RoundedRectangle(cornerRadius: 2).fill(accent.opacity(0.35))
+                                .frame(width: 21, height: CGFloat(12 + number * 4))
+                        }
+                        .padding(7)
+                        .frame(width: 38, height: 60)
+                        .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(outline))
+                    }
+                }
+            } else {
+                ZStack(alignment: .bottomTrailing) {
+                    RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.035))
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(0..<3) { index in
+                            Capsule().fill(Color.primary.opacity(0.14))
+                                .frame(width: CGFloat(95 - index * 12), height: 5)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading).padding(14)
+                    Rectangle().fill(accent.opacity(0.12))
+                        .frame(width: 83, height: 46)
+                        .overlay(Rectangle().stroke(accent, style: StrokeStyle(lineWidth: 2, dash: [5, 4])))
+                        .padding(.trailing, 15).padding(.bottom, 12)
+                    Image(systemName: "cursorarrow").font(.system(size: 20))
+                        .foregroundStyle(Color.primary).padding(.trailing, 4).padding(.bottom, 1)
+                }
+                .frame(width: 146, height: 78)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(outline))
+            }
+
+            Image(systemName: "arrow.right").font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            ZStack {
+                Image(systemName: "clipboard").font(.system(size: 66, weight: .ultraLight))
+                    .foregroundStyle(outline)
+                VStack(spacing: 3) {
+                    ForEach(0..<(collection ? 3 : 1), id: \.self) { _ in
+                        Rectangle().fill(accent.opacity(0.25))
+                            .frame(width: 25, height: collection ? 11 : 30)
+                    }
+                }
+                .padding(.top, 7)
+            }
+            .frame(width: 64, height: 78)
         }
     }
 }
