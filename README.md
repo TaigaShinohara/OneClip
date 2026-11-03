@@ -3,7 +3,7 @@
 必要なところを集めて、ひと貼りで伝えるmacOSのメニューバーアプリです。
 一箇所をすぐコピーする操作と、複数箇所を一枚にまとめる操作を用意しています。
 
-[**OneClip 1.0.0をダウンロード（ZIP）**](https://github.com/TaigaShinohara/OneClip/releases/download/v1.0.0/OneClip-1.0.0.zip) · [リリース情報](https://github.com/TaigaShinohara/OneClip/releases/tag/v1.0.0)
+[**OneClip 1.0.1をダウンロード（ZIP）**](https://github.com/TaigaShinohara/OneClip/releases/download/v1.0.1/OneClip-1.0.1.zip) · [リリース情報](https://github.com/TaigaShinohara/OneClip/releases/tag/v1.0.1)
 
 ZIPを展開し、`OneClip.app`をアプリケーションフォルダへ移動して起動してください。画面上端のOneClipメニューから使えます。必要な時だけmacOSの画面収録を許可します。0.2.0以降の既存アプリでは「アップデートを確認…」から更新できます。
 
@@ -11,7 +11,7 @@ macOS 14以降を対象とするApple Silicon／Intelのuniversal版です。最
 
 ![必要な部分を撮り、一枚にまとめ、コメントを添える機能紹介](docs/images/oneclip-demo.gif)
 
-架空の画面から生成した出力例を使った機能紹介です。操作録画ではありません。[静止画](docs/images/oneclip-overview.png)・[注釈付きの完成PNG例](docs/images/annotated-output.png)も確認できます。
+1.0.0の架空出力例を使った機能紹介です。操作録画ではありません。[静止画](docs/images/oneclip-overview.png)・[注釈付きの完成PNG例](docs/images/annotated-output.png)も確認できます。
 
 ## できること
 
@@ -119,8 +119,10 @@ xcodebuild -project OneClip.xcodeproj -scheme OneClip \
 
 ## 検証状況
 
+1.0.1は注釈画面の関連確認、universal Releaseビルド、署名・公証・チケット添付と公開ZIPの再取得・署名照合を完了しました。署名フィードのmain反映・公開URLからの再取得と、1.0.0からの製品実更新は確認待ちです。[1.0.1の結果と残件](docs/RELEASE-1.0.1.md)を参照してください。
+
 1.0.0はApple Silicon / macOS 27.2で、公開に必要な最小確認を完了しました。署名・公証・公開先の照合、0.2.0からのアプリ内更新・再起動・データと設定の保持を確認しています。[結果と限定条件](docs/RELEASE-1.0.0.md)を参照してください。
-基本の撮影・まとめ撮り・注釈・保存ロジックは0.2.0から変えておらず、有効な既存結果を継承しています。
+1.0.0では基本の撮影・まとめ撮り・注釈・保存ロジックを0.2.0から変えておらず、有効な既存結果を継承しています。1.0.1では注釈の表示とツールを変更しており、今回の確認状況を[1.0.1の記録](docs/RELEASE-1.0.1.md)へ分けて記載します。
 M2「単発alpha」とM3「まとめ撮りbeta」は、記録された版・環境・対象範囲で限定完了しました。
 M3の対象Collection VoiceOverは未実証のまま持ち越しています。
 
