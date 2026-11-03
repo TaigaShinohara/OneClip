@@ -498,7 +498,8 @@ final class CaptureAnnotationController: NSObject, ObservableObject, NSWindowDel
             value.center()
             window = value
         }
-        if window?.contentView == nil {
+        // NSWindow starts with a plain content view; it is not an editor host.
+        if !(window?.contentView is NSHostingView<CaptureAnnotationEditorView>) {
             window?.contentView = NSHostingView(rootView: CaptureAnnotationEditorView(controller: self))
         }
         window?.makeKeyAndOrderFront(nil)
