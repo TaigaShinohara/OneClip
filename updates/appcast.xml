@@ -4,6 +4,14 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>OneClip</title>
         <item>
+            <title>1.0.1</title>
+            <pubDate>Tue, 03 Nov 2026 13:04:42 +0900</pubDate>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/TaigaShinohara/OneClip/releases/download/v1.0.1/OneClip-1.0.1.zip" length="3821021" type="application/octet-stream" sparkle:edSignature="kS/lWR+Fsg1P/NzV+bcIolaCX3+NjBNl5ti/pzY8C0LSV2B8nddBQ7T8SY9+a/vsZ6LWCFoyofsfPyCQ4We3Dw=="></enclosure>
+        </item>
+        <item>
             <title>1.0.0</title>
             <pubDate>Mon, 02 Nov 2026 16:22:20 +0900</pubDate>
             <sparkle:version>3</sparkle:version>
@@ -21,6 +29,6 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
         </item>
     </channel>
 </rss><!-- sparkle-signatures:
-edSignature: 2WgUJh1Yq78E3SN/enXNuT/JMi9eE/aAY2av7emYQkQI3t5cC2lwJF5ovw+OctepPIQUcFiEP1rdHGOsJQNgDg==
-length: 1677
+edSignature: uYgXTbDoPiXmk4aLiizqRxD1CMTjIGPq0pqsoOInoI2hPdgaa/Ex5iWc5uTLiIkKM6fq4OuYJxnfXyt3NGCYDQ==
+length: 2293
 -->
