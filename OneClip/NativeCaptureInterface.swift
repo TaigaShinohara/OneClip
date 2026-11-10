@@ -992,6 +992,8 @@ struct CaptureDataNotice: View {
                     .disabled(isActionDisabled)
                 Text("コメントや囲みは画像を説明するための機能です。写った機密情報を隠すことはできず、原本も残ります。")
                 Text("画像やコメントを外部送信せず、選択範囲や収集セッションも保存しません。コピー後の画像や、標準「プレビュー」・貼り付け先での扱いは、各アプリとOSに従います。")
+                Link("プライバシーポリシー", destination: URL(string: "https://github.com/TaigaShinohara/OneClip/blob/main/PRIVACY.md")!)
+                    .disabled(isActionDisabled)
             }
             .foregroundStyle(.secondary).lineSpacing(3)
             .fixedSize(horizontal: false, vertical: true).padding(.top, 10)
