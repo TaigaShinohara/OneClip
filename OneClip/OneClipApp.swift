@@ -130,6 +130,7 @@ struct OneClipApp: App {
                 .disabled(collection.isActive || collection.isWorking || capture.isWorking || capture.phase == .selecting || NativeCaptureInterface.shared.hasDiscardConfirmation || keys.desiredChord != nil || M2FailureLab.isEnabled || M3FailureLab.isEnabled)
             #endif
             Divider()
+            #if !APP_STORE
             Button("アップデートを確認…") { updates.checkForUpdates(channel: .stable) }
                 .disabled(!updates.canCheckForUpdates)
             if updates.hasPostponedInstallation {
@@ -138,6 +139,7 @@ struct OneClipApp: App {
                     .disabled(!updates.canResumeInstallation)
             }
             Divider()
+            #endif
             Button("OneClipを終了") {
                 NSApplication.shared.terminate(nil)
             }
