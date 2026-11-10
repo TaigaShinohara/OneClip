@@ -198,8 +198,10 @@ private struct CaptureSettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.horizontal, 4).padding(.bottom, 10)
                     CaptureDataNotice(isActionDisabled: recording || candidate != nil || keys.settingsInteractionBlocked)
+                    #if !APP_STORE
                     AppUpdateSettingsSection().padding(.top, 20)
                         .padding(.horizontal, 4).padding(.bottom, 16)
+                    #endif
                     DisclosureGroup("キーの使い方", isExpanded: $showsHelp) {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("⌃ Control・⌥ Option・⌘ Commandのいずれかと、文字や数字などを組み合わせます。2つの撮影には別のキーを設定します。")
