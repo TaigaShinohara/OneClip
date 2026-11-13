@@ -70,11 +70,11 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
     var collectionCopyBlocked: Bool {
         updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
-            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
+            || usageGuideWindow?.isVisible == true || onboardingWindow?.isVisible == true || hasDiscardConfirmation
     }
     var captureEntryBlocked: Bool {
         updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
-            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
+            || usageGuideWindow?.isVisible == true || onboardingWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?
     private var selectionOwner: CaptureUIOwner?
@@ -85,6 +85,8 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     private var captureGuideCancelled: (@MainActor () -> Void)?
     private var usageGuideWindow: NSWindow?
     private weak var usageReturnWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
+    private weak var onboardingReturnWindow: NSWindow?
     private var expandedSelectionHelp = false
     private var permissionOwner: CaptureUIOwner?
     private var permissionWindow: NSWindow?
@@ -433,7 +435,40 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
 
     func showWelcomeIfNeeded() {
         guard !CapturePreferences.shared.hasSeenWelcome else { return }
-        showUsageGuide()
+        if CapturePreferences.shared.welcomeOnboardingVersionSeen < CaptureOnboarding.version {
+            showOnboarding()
+        } else {
+            showUsageGuide()
+        }
+    }
+
+    /// First-run onboarding. Finishing or skipping marks the welcome as seen;
+    /// the per-mode capture guides keep their own first-capture timing.
+    func showOnboarding() {
+        if onboardingWindow?.isVisible == true { show(onboardingWindow); return }
+        guard !captureEntryBlocked, coordinator?.isWorking != true, collectionCoordinator?.isWorking != true,
+              coordinator?.phase != .selecting, coordinator?.phase != .permission,
+              collectionCoordinator?.phase != .selecting, collectionCoordinator?.phase != .permission else { return }
+        onboardingReturnWindow = NSApp.keyWindow
+        if onboardingWindow == nil {
+            onboardingWindow = makeWindow(title: "OneClip — ようこそ", size: NSSize(width: 560, height: 640))
+        }
+        onboardingWindow?.contentView = NSHostingView(rootView: CaptureOnboardingView(
+            finished: { [weak self] startFirstCapture in
+                self?.closeOnboarding(startFirstCapture: startFirstCapture)
+            }))
+        show(onboardingWindow)
+        notifyEntryGateChanged()
+    }
+
+    private func closeOnboarding(startFirstCapture: Bool) {
+        CapturePreferences.shared.welcomeOnboardingVersionSeen = CaptureOnboarding.version
+        CapturePreferences.shared.hasSeenWelcome = true
+        onboardingWindow?.orderOut(nil)
+        if NSApp.isActive, let window = onboardingReturnWindow, window.isVisible { window.makeKeyAndOrderFront(nil) }
+        onboardingReturnWindow = nil
+        notifyEntryGateChanged()
+        if startFirstCapture { OneClipModeActions.single() }
     }
 
     /// Reading this guide never starts an operation or changes either retained-image owner.
@@ -626,6 +661,8 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
             answerEndAll(false)
         } else if window === usageGuideWindow {
             closeUsageGuide()
+        } else if window === onboardingWindow {
+            closeOnboarding(startFirstCapture: false)
         } else if window === captureGuideWindow {
             let cancelled = captureGuideCancelled
             captureGuideCancelled = nil

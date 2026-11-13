@@ -9,20 +9,24 @@ final class CapturePreferences {
     private var collectionGuideSeen: Bool
     private var pasteHintSeen: Bool
     private var welcomeSeen: Bool
+    private var onboardingVersionSeen: Int
     private static let guideKey = "OneClip.hasSeenCaptureGuide"
     private static let collectionGuideKey = "OneClip.hasSeenCollectionGuide"
     private static let pasteKey = "OneClip.hasSeenPasteHint"
     private static let welcomeKey = "OneClip.hasSeenWelcome"
+    private static let onboardingKey = "OneClip.welcomeOnboardingVersionSeen"
 
     /// Passing nil creates an isolated, memory-only store for injected tests and Debug panels.
     init(defaults: UserDefaults? = .standard,
          hasSeenCaptureGuide: Bool = false, hasSeenPasteHint: Bool = false,
-         hasSeenCollectionGuide: Bool = false, hasSeenWelcome: Bool = false) {
+         hasSeenCollectionGuide: Bool = false, hasSeenWelcome: Bool = false,
+         welcomeOnboardingVersionSeen: Int = 0) {
         self.defaults = defaults
         captureGuideSeen = defaults?.object(forKey: Self.guideKey) as? Bool ?? hasSeenCaptureGuide
         collectionGuideSeen = defaults?.object(forKey: Self.collectionGuideKey) as? Bool ?? hasSeenCollectionGuide
         pasteHintSeen = defaults?.object(forKey: Self.pasteKey) as? Bool ?? hasSeenPasteHint
         welcomeSeen = defaults?.object(forKey: Self.welcomeKey) as? Bool ?? hasSeenWelcome
+        onboardingVersionSeen = defaults?.object(forKey: Self.onboardingKey) as? Int ?? welcomeOnboardingVersionSeen
     }
 
     /// Existing users already acknowledged an introduction. Do not interrupt them after upgrading.
@@ -44,5 +48,12 @@ final class CapturePreferences {
     var hasSeenCollectionGuide: Bool {
         get { collectionGuideSeen }
         set { collectionGuideSeen = newValue; defaults?.set(newValue, forKey: Self.collectionGuideKey) }
+    }
+
+    /// Version of the first-run onboarding the user finished or skipped.
+    /// Bumping CaptureOnboarding.version shows a revised flow once more.
+    var welcomeOnboardingVersionSeen: Int {
+        get { onboardingVersionSeen }
+        set { onboardingVersionSeen = newValue; defaults?.set(newValue, forKey: Self.onboardingKey) }
     }
 }
