@@ -1952,7 +1952,6 @@ struct OneClipOnboardingView: View {
     @State private var isAutoAdvancing = false
     @State private var heroEntered = false
     @State private var ambientPhaseA = false
-    @State private var ambientPhaseB = false
     @State private var ambientStarted = false
     @State private var mockDragStart: CGPoint?
     @State private var mockDragCurrent: CGPoint?
@@ -2139,10 +2138,6 @@ struct OneClipOnboardingView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.05))
 
-            if !reduceMotion && page.ambientElementCount > 0 {
-                ambientBackgroundLayer
-            }
-
             stageContent(for: page)
                 .padding(18)
                 .scaleEffect(reactionBounce && !reduceMotion ? (activeReactionLevel == .large ? 1.05 : 1.025) : 1.0)
@@ -2150,25 +2145,6 @@ struct OneClipOnboardingView: View {
                 .offset(y: heroEntered || reduceMotion ? 0 : 8)
         }
         .clipped()
-    }
-
-    private var ambientBackgroundLayer: some View {
-        ZStack {
-            Circle()
-                .fill(accentColor.opacity(0.08))
-                .frame(width: 120, height: 120)
-                .offset(x: -140, y: ambientPhaseA ? -36 : -30)
-                .scaleEffect(ambientPhaseA ? 1.03 : 0.98)
-            if page.ambientElementCount >= 2 {
-                Circle()
-                    .fill(accentColor.opacity(0.06))
-                    .frame(width: 96, height: 96)
-                    .offset(x: 145, y: ambientPhaseB ? 42 : 36)
-                    .rotationEffect(.degrees(ambientPhaseB ? 1.5 : -1.5))
-            }
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -2892,7 +2868,6 @@ struct OneClipOnboardingView: View {
     private func startAmbientAnimationsIfNeeded() {
         if reduceMotion {
             ambientPhaseA = false
-            ambientPhaseB = false
             ambientStarted = false
             return
         }
@@ -2900,9 +2875,6 @@ struct OneClipOnboardingView: View {
         ambientStarted = true
         withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
             ambientPhaseA = true
-        }
-        withAnimation(.easeInOut(duration: 3.7).repeatForever(autoreverses: true)) {
-            ambientPhaseB = true
         }
     }
 
