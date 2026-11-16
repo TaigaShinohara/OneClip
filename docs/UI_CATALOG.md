@@ -20,6 +20,7 @@
 | `CaptureAnnotationEditorView` | コメント・囲み・番号の注釈エディタ | `OneClip/CaptureAnnotationEditor.swift` | 使用中 |
 | `CapturePermissionContent` | 画面収録の許可案内コンテンツ | `OneClip/NativeCaptureInterface.swift` | 使用中 |
 | `CaptureGuideView` / `CaptureUsageGuideView` | 撮影前案内・使い方案内 | `OneClip/NativeCaptureInterface.swift` | 使用中 |
+| `OneClipOnboardingView` / `OnboardingWindowDotsView` | 初回オンボーディング（全13ページ、1ページ1主張、窓ドット、称賛・触覚反応、ミニ試し操作） | `OneClip/NativeCaptureInterface.swift` | 新規（`OneClipStyle`・`ART_DIRECTION.md` 準拠） |
 | `CaptureProblemView` / `CaptureFeedbackView` | 問題発生時・状態フィードバック表示 | `OneClip/NativeCaptureInterface.swift` | 使用中 |
 | `CaptureDiscardConfirmationView` / `CollectionConfirmationView` | 破棄・撮り直し確認ダイアログ | `OneClip/NativeCaptureInterface.swift`, `OneClip/CollectionPanel.swift` | 使用中 |
 

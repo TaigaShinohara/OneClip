@@ -190,10 +190,14 @@ private struct CaptureSettingsView: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                         .padding(.bottom, 16)
-                    Button("使い方…") { NativeCaptureInterface.shared.showUsageGuide() }
-                        .buttonStyle(.borderless)
-                        .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
-                        .padding(.horizontal, 4).padding(.bottom, 16)
+                    HStack(spacing: 16) {
+                        Button("使い方…") { NativeCaptureInterface.shared.showUsageGuide() }
+                            .buttonStyle(.borderless)
+                        Button("初回ガイド…") { NativeCaptureInterface.shared.showOnboarding() }
+                            .buttonStyle(.borderless)
+                    }
+                    .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
+                    .padding(.horizontal, 4).padding(.bottom, 16)
                     Text("撮影画像はこのMacに自動保存し、保存期限はありません。")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
