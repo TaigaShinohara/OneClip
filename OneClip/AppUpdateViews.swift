@@ -40,8 +40,6 @@ struct AppUpdateSettingsSection: View {
                 }.padding(.top, 8)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .oneClipCard()
     }
 }

@@ -1155,18 +1155,18 @@ private struct CaptureUsageDiagram: View {
                     ForEach(1..<4) { number in
                         VStack(spacing: 5) {
                             Text("\(number)").font(.caption2.monospacedDigit())
-                            RoundedRectangle(cornerRadius: 2).fill(accent.opacity(0.35))
+                            RoundedRectangle(cornerRadius: 2, style: .continuous).fill(accent.opacity(0.35))
                                 .frame(width: 21, height: CGFloat(12 + number * 4))
                         }
                         .padding(7)
                         .frame(width: 38, height: 60)
-                        .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(outline))
+                        .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(outline))
                     }
                 }
             } else {
                 ZStack(alignment: .bottomTrailing) {
-                    RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.035))
+                    RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.035))
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(0..<3) { index in
                             Capsule().fill(Color.primary.opacity(0.14))
@@ -1182,7 +1182,7 @@ private struct CaptureUsageDiagram: View {
                         .foregroundStyle(Color.primary).padding(.trailing, 4).padding(.bottom, 1)
                 }
                 .frame(width: 146, height: 78)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(outline))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(outline))
             }
 
             Image(systemName: "arrow.right").font(.system(size: 18, weight: .medium))

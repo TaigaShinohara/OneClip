@@ -102,7 +102,7 @@ struct CaptureAnnotationEditorView: View {
         }
         .background {
             if controller.tool == kind {
-                RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.16))
+                RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.accentColor.opacity(0.16))
             }
         }
         .disabled(controller.isWorking || controller.image == nil)
@@ -143,8 +143,8 @@ struct CaptureAnnotationEditorView: View {
                 TextEditor(text: $controller.commentDraft)
                     .font(.body).focused($commentFocused)
                     .frame(minHeight: 136, maxHeight: 180).padding(6)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.primary.opacity(0.16)))
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.16)))
                     .disabled(!canEditComment || controller.isWorking)
                     .accessibilityLabel("画像に付けるコメント")
                 VStack(alignment: .leading, spacing: 8) {

@@ -472,7 +472,7 @@ struct CollectionPanelView: View {
                 .focusable(expanded && actualPixels)
                 .focused($focusedAction, equals: "preview")
                 .overlay {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(focusedAction == "preview" ? Color.accentColor : .clear, lineWidth: 2)
                         .allowsHitTesting(false)
                 }

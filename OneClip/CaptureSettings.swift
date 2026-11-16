@@ -152,6 +152,7 @@ private struct CaptureSettingsView: View {
     @State private var recording = false
     @State private var inputMessage = ""
     @State private var showsHelp = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         ScrollViewReader { scroll in
@@ -176,7 +177,7 @@ private struct CaptureSettingsView: View {
                             }
                         }
                         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+                        .background(OneClipTone.warning.color(for: scheme).opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .padding(.bottom, 16)
                     }
                     VStack(spacing: 16) {
