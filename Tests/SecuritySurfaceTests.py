@@ -119,7 +119,7 @@ class SecuritySurfaceTests(unittest.TestCase):
         self.assertNotIn(email, json.dumps(report))
 
     def test_exact_public_project_email_is_allowed_without_echo(self):
-        email = "deeple+oneclipstaff@inkboxmail.com"
+        email = "support-oneclip@dobulab.com"
         self.command("config", "user.email", email)
         tip = self.commit("# Public project contact fixture\n")
         report = self.audit(tip)
@@ -129,12 +129,16 @@ class SecuritySurfaceTests(unittest.TestCase):
 
     def test_similar_project_addresses_remain_unapproved_without_echo(self):
         addresses = (
+            "deeple+oneclipstaff@inkboxmail.com",
             "other@inkboxmail.com",
             "deeple@inkboxmail.com",
             "deeple+other@inkboxmail.com",
             "deeple+oneclipstaff+other@inkboxmail.com",
             "Deeple+oneclipstaff@inkboxmail.com",
             "deeple+oneclipstaff@Inkboxmail.com",
+            "support+oneclip@dobulab.com",
+            "Support-oneclip@dobulab.com",
+            "support-oneclip@Dobulab.com",
         )
         for index, email in enumerate(addresses):
             with self.subTest(address=index):
@@ -155,7 +159,7 @@ class SecuritySurfaceTests(unittest.TestCase):
 
     def test_project_email_exception_does_not_allow_unknown_author_names_or_secrets(self):
         self.command("config", "user.name", "Synthetic Unapproved Contributor")
-        self.command("config", "user.email", "deeple+oneclipstaff@inkboxmail.com")
+        self.command("config", "user.email", "support-oneclip@dobulab.com")
         value = "gh" + "p_" + "C" * 35
         tip = self.commit(value)
         report = self.audit(tip)

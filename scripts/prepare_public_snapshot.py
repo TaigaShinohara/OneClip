@@ -52,7 +52,7 @@ FORBIDDEN_SUFFIXES = {".p12", ".p8", ".pem", ".key", ".mobileprovision", ".provi
 
 # This address is an intentionally public project contact, not a domain-wide
 # exemption. Preserve exact spelling/case; similar aliases remain unapproved.
-APPROVED_PROJECT_AUTHOR_EMAIL = "deeple+oneclipstaff@inkboxmail.com"
+APPROVED_PROJECT_AUTHOR_EMAIL = "support-oneclip@dobulab.com"
 GITHUB_NOREPLY_EMAIL = re.compile(
     r"[A-Za-z0-9+_.-]+@users\.noreply\.github\.com|noreply@github\.com"
 )
