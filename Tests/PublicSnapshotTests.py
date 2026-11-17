@@ -63,7 +63,7 @@ class PublicSnapshotTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
 
     def test_approved_project_email_is_preserved_in_new_snapshot(self):
-        email = "deeple+oneclipstaff@inkboxmail.com"
+        email = "support-oneclip@dobulab.com"
         self.git("config", "user.email", email)
         self.commit("# Public project contact fixture\n")
         self.prepare()
@@ -71,11 +71,12 @@ class PublicSnapshotTests(unittest.TestCase):
 
     def test_public_email_policy_requires_exact_project_address_or_github_noreply(self):
         accepted = (
-            "deeple+oneclipstaff@inkboxmail.com",
+            "support-oneclip@dobulab.com",
             "12345+synthetic@users.noreply.github.com",
             "noreply@github.com",
         )
         rejected = (
+            "deeple+oneclipstaff@inkboxmail.com",
             "other@inkboxmail.com",
             "deeple@inkboxmail.com",
             "deeple+other@inkboxmail.com",
@@ -84,6 +85,11 @@ class PublicSnapshotTests(unittest.TestCase):
             "deeple+oneclipstaff@Inkboxmail.com",
             " deeple+oneclipstaff@inkboxmail.com",
             "deeple+oneclipstaff@inkboxmail.com ",
+            "support+oneclip@dobulab.com",
+            "Support-oneclip@dobulab.com",
+            "support-oneclip@Dobulab.com",
+            " support-oneclip@dobulab.com",
+            "support-oneclip@dobulab.com ",
             "synthetic@users.noreply.github.com.example.test",
             "synthetic@example.test",
         )
