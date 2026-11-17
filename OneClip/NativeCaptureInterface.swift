@@ -1158,64 +1158,83 @@ struct CaptureUsageGuideView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "viewfinder")
-                    .font(.system(size: 25, weight: .medium))
-                    .foregroundStyle(.secondary).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("OneClipの使い方").font(.title2.weight(.semibold))
-                    Text("必要なところを集めて、ひと貼り")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            }
+        VStack(alignment: .leading, spacing: 18) {
+            OneClipHeading(title: "OneClipの使い方",
+                           subtitle: "必要なところを集めて、ひと貼り",
+                           systemName: collection ? "square.stack" : "viewfinder",
+                           tone: activeTone)
+
             if let concern = onboardingConcern {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(concern.initialGuideBanner, systemImage: highlightsOnboardingConnection ? "sparkles" : concern.optionSymbol)
+                VStack(alignment: .leading, spacing: 5) {
+                    Label(concern.initialGuideBanner,
+                          systemImage: highlightsOnboardingConnection ? "sparkles" : concern.optionSymbol)
                         .font(.callout.weight(.medium))
                         .foregroundStyle(activeTone.color(for: colorScheme))
+                        .fixedSize(horizontal: false, vertical: true)
                     if let sample = onboardingTrialSample {
-                        Text("試し操作の記録：「\(sample.title)（\(sample.dimensionsLabel)）」で切り取りの流れを確認済み")
-                            .font(.caption).foregroundStyle(.secondary)
+                        Text("試し操作の記録：「\(sample.title)（\(sample.dimensionsLabel)）」で確認済み")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(activeTone.color(for: colorScheme).opacity(0.08),
                             in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(activeTone.color(for: colorScheme).opacity(0.18))
+                        .allowsHitTesting(false)
+                }
             }
-            Text("画面上部のOneClipメニューから撮影できます。\nキーは「設定…」で設定・変更できます。")
-                .font(.callout).foregroundStyle(.secondary)
-                .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-            Picker("撮影の使い方", selection: $collection) {
-                Text("範囲をコピー").tag(false)
-                Text("集めてコピー").tag(true)
-            }
-            .pickerStyle(.segmented).labelsHidden()
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(collection ? "集めて、一枚に" : "ドラッグして、離すだけ")
-                    .font(.title3.weight(.semibold))
-                Text(collection
-                     ? "1つの画面内で範囲を選び、最大4枚を追加します。"
-                     : "1つの画面内で範囲を選択。離すとコピー・保存します。")
-                CaptureUsageDiagram(collection: collection)
-                    .frame(height: 82).frame(maxWidth: .infinity)
-                    .accessibilityHidden(true)
-                if collection {
-                    Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
+                Picker("撮影の使い方", selection: $collection) {
+                    Text("範囲をコピー").tag(false)
+                    Text("集めてコピー").tag(true)
                 }
-                Text("右下のプレビューからコメントや記号を追加できます。")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.callout).lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .oneClipCard(padding: 18)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(collection ? "集めて、一枚に" : "ドラッグして、離すだけ")
+                        .font(.title3.weight(.semibold))
+                    Text(collection
+                         ? "1つの画面内で範囲を選び、最大4枚を追加します。"
+                         : "1つの画面内で範囲を選択。離すとコピー・保存します。")
+                    CaptureUsageDiagram(collection: collection)
+                        .frame(height: 82)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityHidden(true)
+                    if collection {
+                        Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
+                    }
+                    Text("右下のプレビューからコメントや記号を追加できます。")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .oneClipCard(padding: 18)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                noticeRow(systemName: "menubar.rectangle",
+                          text: "画面上部のOneClipメニューから撮影できます。キーは「設定…」で変更できます。")
+                noticeRow(systemName: "doc.on.clipboard",
+                          text: collection
+                          ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
+                          : "確定すると、今のクリップボードを置き換えます。")
+                noticeRow(systemName: "internaldrive",
+                          text: "完成画像はこのMacに自動保存されます。終了・ロック後も残り、保存期限はありません。")
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
                 DisclosureGroup(collection ? "操作と素材の扱い" : "キーボードでの操作",
                                 isExpanded: $showsOperationDetails) {
-                    operationDetails.padding(.top, 10)
+                    operationDetails.padding(.top, 8)
                 }
                 Divider()
                 CaptureDataNotice(title: "保存・権限の詳細", includesPermissionNotice: true,
@@ -1223,22 +1242,13 @@ struct CaptureUsageGuideView: View {
             }
             .font(.callout)
 
-            VStack(alignment: .leading, spacing: 10) {
-                Label(collection
-                      ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
-                      : "確定すると、今のクリップボードを置き換えます。",
-                      systemImage: "doc.on.clipboard")
-                Label("完成画像はこのMacに自動保存されます。\n終了・ロック後も残り、保存期限はありません。",
-                      systemImage: "internaldrive")
-            }
-            .font(.callout).lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-
             Divider()
+
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("使い方はメニュー・設定からいつでも確認できます。")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Button("初回ガイドをもう一度見る…", action: reopenOnboarding)
                         .buttonStyle(.borderless)
@@ -1246,9 +1256,12 @@ struct CaptureUsageGuideView: View {
                 }
                 Spacer(minLength: 0)
                 Button("わかりました") { closed(viewedModes.union([collection])) }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(activeTone.color(for: colorScheme))
             }
-            .buttonBorderShape(.capsule).controlSize(.large)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
         }
         .oneClipWindow().frame(width: 500, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -1257,6 +1270,20 @@ struct CaptureUsageGuideView: View {
             contentSizeChanged()
         }
         .onChange(of: showsOperationDetails) { _, _ in contentSizeChanged() }
+    }
+
+    private func noticeRow(systemName: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemName)
+                .foregroundStyle(.secondary)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.callout)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var operationDetails: some View {
