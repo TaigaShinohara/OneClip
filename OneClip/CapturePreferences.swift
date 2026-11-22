@@ -16,10 +16,10 @@ enum OnboardingConcern: String, CaseIterable, Equatable, Sendable, Identifiable 
 
     var optionTitle: String {
         switch self {
-        case .multi: return "複数の画面を、何回も撮って貼り直している"
-        case .explain: return "画像のどこを見てほしいか、言葉で伝わりにくい"
-        case .quick: return "必要な部分だけを、すぐ切り取って貼りたい"
-        case .unsure: return "まだわからない・使いながら決めたい"
+        case .multi: return "複数の箇所を1枚にまとめたい"
+        case .explain: return "画像にコメントや囲みを付けたい"
+        case .quick: return "1箇所をすぐコピーしたい"
+        case .unsure: return "使いながら決めたい"
         }
     }
 

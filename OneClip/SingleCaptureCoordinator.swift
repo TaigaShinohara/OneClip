@@ -159,8 +159,11 @@ final class SingleCaptureCoordinator: ObservableObject {
     /// Installed only in the production coordinator; tests and failure labs stay isolated.
     var onCaptureResult: (@MainActor (Data, Bool, UUID) -> Void)?
 
+    static let initialStatusText = "範囲を選んでコピーできます"
     @Published private(set) var phase = SingleCapturePhase.idle
-    @Published private(set) var statusText = "範囲を選んでコピーできます"
+    @Published private(set) var statusText = SingleCaptureCoordinator.initialStatusText
+    // Results and invalidation notices can remain relevant after returning to idle.
+    var hasStatusNotice: Bool { statusText != Self.initialStatusText }
     @Published private(set) var permissionMessage = "選んだ範囲をコピーするために必要です。"
     @Published private(set) var permissionStatus = CapturePermissionStatus.notChecked
     @Published private(set) var problem: SingleCaptureProblem?

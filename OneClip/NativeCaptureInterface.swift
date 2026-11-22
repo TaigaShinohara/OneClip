@@ -439,7 +439,7 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         showOnboarding()
     }
 
-    /// Presents the 13-page mobile_onboarding-compliant interactive introduction without starting capture or requesting permissions.
+    /// Presents a compact introduction using synthetic examples, without capture or permission requests.
     func showOnboarding() {
         if onboardingWindow?.isVisible == true { show(onboardingWindow); return }
         let replacingUsageGuide = usageGuideWindow?.isVisible == true
@@ -530,9 +530,6 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         let preferredMode = initialCollection ?? CapturePreferences.shared.preferredInitialCollectionMode
         usageGuideWindow?.contentView = NSHostingView(rootView: CaptureUsageGuideView(
             collection: preferredMode,
-            onboardingConcern: CapturePreferences.shared.selectedOnboardingConcern,
-            onboardingTrialSample: CapturePreferences.shared.completedOnboardingTrial,
-            highlightsOnboardingConnection: fromOnboarding,
             reopenOnboarding: { [weak self] in self?.showOnboarding() },
             closed: { [weak self] modes in self?.closeUsageGuide(seenModes: modes) },
             contentSizeChanged: { [weak self] in self?.usageContentSizeChanged() }))
@@ -1018,7 +1015,7 @@ private final class RegionSelectionView: NSView {
     }
 }
 
-/// The same instructions appear at first use and in the permanent usage guide.
+/// First-use instructions retain the consequences of the next capture action.
 private struct CaptureGuideInstructions: View {
     let collection: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -1029,7 +1026,7 @@ private struct CaptureGuideInstructions: View {
             guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
                       message: collection
                         ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
-                        : "1つの画面内でドラッグし、離すとコピー・保存します。右下のプレビューからコメントや記号を追加できます。")
+                        : "1つの画面内でドラッグし、離すとコピー・保存します。")
             Divider()
             guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "完成画像を確認してコピー" : "矢印でも選べます",
                       message: collection
@@ -1039,8 +1036,8 @@ private struct CaptureGuideInstructions: View {
         .oneClipCard()
         VStack(alignment: .leading, spacing: 8) {
             if collection {
-                Label("取り直しは、新しい範囲を確認してから差し替えます。途中で取り消すと旧素材を残します。", systemImage: "arrow.uturn.backward")
-                Text("収集パネルを閉じても素材は残ります。未コピーの素材・変更の破棄や、未コピー画像を残して終了する時は確認します。スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。")
+                Label("取り直しは新旧を確認してから差し替えます。取消なら元の素材を残します。", systemImage: "arrow.uturn.backward")
+                Text("パネルを閉じても素材は残ります。未コピーの素材や変更の破棄は確認します。スリープ・ロック・ユーザー切替・画面構成変更では破棄します。")
                     .foregroundStyle(.secondary)
             } else {
                 Label("確定すると、今のクリップボードを置き換えます。", systemImage: "doc.on.clipboard")
@@ -1108,7 +1105,7 @@ struct CaptureGuideView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            OneClipHeading(title: collection ? "必要なところを集めて、ひと貼り" : "必要なところを選んで、コピー",
+            OneClipHeading(title: collection ? "集めてコピー" : "範囲をコピー",
                            systemName: collection ? "square.stack" : "viewfinder", tone: tone)
             CaptureGuideInstructions(collection: collection)
             HStack {
@@ -1125,9 +1122,6 @@ struct CaptureGuideView: View {
 }
 
 struct CaptureUsageGuideView: View {
-    let onboardingConcern: OnboardingConcern?
-    let onboardingTrialSample: OnboardingTrialSample?
-    let highlightsOnboardingConnection: Bool
     let reopenOnboarding: () -> Void
     let closed: (Set<Bool>) -> Void
     let contentSizeChanged: () -> Void
@@ -1137,15 +1131,9 @@ struct CaptureUsageGuideView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     init(collection: Bool = false,
-         onboardingConcern: OnboardingConcern? = nil,
-         onboardingTrialSample: OnboardingTrialSample? = nil,
-         highlightsOnboardingConnection: Bool = false,
          reopenOnboarding: @escaping () -> Void = {},
          closed: @escaping (Set<Bool>) -> Void,
          contentSizeChanged: @escaping () -> Void = {}) {
-        self.onboardingConcern = onboardingConcern
-        self.onboardingTrialSample = onboardingTrialSample
-        self.highlightsOnboardingConnection = highlightsOnboardingConnection
         self.reopenOnboarding = reopenOnboarding
         self.closed = closed
         self.contentSizeChanged = contentSizeChanged
@@ -1160,33 +1148,8 @@ struct CaptureUsageGuideView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             OneClipHeading(title: "OneClipの使い方",
-                           subtitle: "必要なところを集めて、ひと貼り",
                            systemName: collection ? "square.stack" : "viewfinder",
                            tone: activeTone)
-
-            if let concern = onboardingConcern {
-                VStack(alignment: .leading, spacing: 5) {
-                    Label(concern.initialGuideBanner,
-                          systemImage: highlightsOnboardingConnection ? "sparkles" : concern.optionSymbol)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(activeTone.color(for: colorScheme))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let sample = onboardingTrialSample {
-                        Text("試し操作の記録：「\(sample.title)（\(sample.dimensionsLabel)）」で確認済み")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(activeTone.color(for: colorScheme).opacity(0.08),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(activeTone.color(for: colorScheme).opacity(0.18))
-                        .allowsHitTesting(false)
-                }
-            }
 
             VStack(alignment: .leading, spacing: 10) {
                 Picker("撮影の使い方", selection: $collection) {
@@ -1210,7 +1173,7 @@ struct CaptureUsageGuideView: View {
                     if collection {
                         Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
                     }
-                    Text("右下のプレビューからコメントや記号を追加できます。")
+                    Label("撮影後の小画像から注釈を追加できます。", systemImage: "text.bubble")
                         .foregroundStyle(.secondary)
                 }
                 .font(.callout)
@@ -1221,13 +1184,13 @@ struct CaptureUsageGuideView: View {
 
             VStack(alignment: .leading, spacing: 10) {
                 noticeRow(systemName: "menubar.rectangle",
-                          text: "画面上部のOneClipメニューから撮影できます。キーは「設定…」で変更できます。")
+                          text: "メニューバーから撮影。キーの変更は「設定…」へ。")
                 noticeRow(systemName: "doc.on.clipboard",
                           text: collection
                           ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
                           : "確定すると、今のクリップボードを置き換えます。")
                 noticeRow(systemName: "internaldrive",
-                          text: "完成画像はこのMacに自動保存されます。終了・ロック後も残り、保存期限はありません。")
+                          text: "画像はこのMacに自動保存され、終了・ロック後も残ります。保存期限はありません。")
             }
 
             VStack(alignment: .leading, spacing: 10) {
@@ -1246,10 +1209,6 @@ struct CaptureUsageGuideView: View {
 
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("使い方はメニュー・設定からいつでも確認できます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                     Button("初回ガイドをもう一度見る…", action: reopenOnboarding)
                         .buttonStyle(.borderless)
                         .font(.caption)
@@ -1617,25 +1576,10 @@ struct CaptureProblemView: View {
     }
 }
 
-// MARK: - Mobile Onboarding Skill Implementation (13 Pages, 1 Claim Per Page)
+// MARK: - Compact onboarding (one task per page)
 
-enum OnboardingPageRole: String, CaseIterable, Equatable, Sendable {
-    case hook = "フック"
-    case selection = "選択"
-    case match = "マッチ"
-    case identity = "アイデンティティ"
-    case value = "価値"
-    case step = "ステップ"
-    case interaction = "インタラクション"
-    case expectation = "期待"
-    case connection = "接続"
-}
-
-enum OnboardingReactionLevel: String, Equatable, Sendable {
-    case small
-    case mediumConcern
-    case mediumTrial
-    case large
+enum OnboardingPageRole: String, Equatable, Sendable {
+    case identity, selection, interaction, match, connection
 }
 
 struct OnboardingWindowDots: Equatable, Sendable {
@@ -1670,293 +1614,40 @@ struct OnboardingWindowDots: Equatable, Sendable {
     }
 }
 
-struct OnboardingPraiseBank: Equatable, Sendable {
-    private var lastIndexByLevel: [OnboardingReactionLevel: Int] = [:]
-
-    static let smallMessages: [String] = [
-        "確認しました。次へ進みます。",
-        "そのまま進みましょう。",
-        "了解です。次のポイントへ移ります。",
-        "受け取りました。続けて見ていきましょう。"
-    ]
-
-    static let mediumConcernMessages: [String] = [
-        "教えてくれてありがとうございます。それがいちばん助かる使い方です。",
-        "なるほど、その場面ですね。ぴったりの順番でご案内します。",
-        "選びましたね。その困りごとに効くポイントから見ていきましょう。",
-        "ありがとうございます。あなたに合う最初の1歩を用意しました。"
-    ]
-
-    static let mediumTrialMessages: [String] = [
-        "その選び方で合っています。そのまま進みましょう。",
-        "きれいに切り取れました。本番も同じ感覚で選べます。",
-        "ばっちりです。選んだ範囲がすぐ1枚の画像になります。"
-    ]
-
-    static let largeMessages: [String] = [
-        "ここまでで準備は終わりです。あとは最初の1つだけです。",
-        "準備が整いました。画面上のメニューからいつでも始められます。",
-        "すべて完了です。選んだモードで最初の1枚を試してみましょう。"
-    ]
-
-    static func messages(for level: OnboardingReactionLevel) -> [String] {
-        switch level {
-        case .small: return smallMessages
-        case .mediumConcern: return mediumConcernMessages
-        case .mediumTrial: return mediumTrialMessages
-        case .large: return largeMessages
-        }
-    }
-
-    mutating func nextMessage(for level: OnboardingReactionLevel, preferredSeed: Int = 0) -> String {
-        let pool = Self.messages(for: level)
-        guard !pool.isEmpty else { return "" }
-        var candidate = abs(preferredSeed) % pool.count
-        if let last = lastIndexByLevel[level], pool.count > 1, candidate == last {
-            candidate = (last + 1) % pool.count
-        }
-        lastIndexByLevel[level] = candidate
-        return pool[candidate]
-    }
-}
-
 struct OnboardingPageSpec: Equatable, Sendable, Identifiable {
     let index: Int
-    let pageNumber: Int
     let role: OnboardingPageRole
-    let chapterLabel: String
     let headline: String
     let subtitle: String
     let tone: OneClipTone
-    let heroSymbol: String
     let heroDescription: String
-    let heroAnimationMeaning: String
-    let ambientElementCount: Int
-    let requiresChoiceToAdvance: Bool
-    let reactionLevel: OnboardingReactionLevel
-    let valueTopic: OnboardingValueTopic?
-    let stepNumber: Int?
-
     var id: Int { index }
+    var pageNumber: Int { index + 1 }
+    var requiresChoiceToAdvance: Bool { role == .selection || role == .interaction }
 }
 
 enum OnboardingPageCatalog {
-    static let totalPageCount = 13
+    static let totalPageCount = 5
 
     static func pages(for concern: OnboardingConcern, trialSample: OnboardingTrialSample) -> [OnboardingPageSpec] {
-        let primaryTone: OneClipTone = concern.prefersCollection ? .collection : .single
-        let orderedValues = concern.orderedValues
-        let firstValue = valueSpec(for: orderedValues[0], index: 4, pageNumber: 5, orderLabel: "1")
-        let secondValue = valueSpec(for: orderedValues[1], index: 5, pageNumber: 6, orderLabel: "2")
-
+        let tone: OneClipTone = concern.prefersCollection ? .collection : .single
         return [
-            OnboardingPageSpec(
-                index: 0, pageNumber: 1, role: .hook,
-                chapterLabel: "導入",
-                headline: "何枚ものスクショを、ひと貼りに",
-                subtitle: "バラバラに撮って何度も貼り直す手間を、今日で終わりにしましょう。",
-                tone: .collection,
-                heroSymbol: "square.stack.3d.up.fill",
-                heroDescription: "散らばった3枚の画面カードが中央の1枚のボードに吸い込まれて整列する図",
-                heroAnimationMeaning: "3枚のカードが中央へ寄って縦1枚に揃う動きで、バラバラの情報がひと貼りにまとまる快感を伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 1, pageNumber: 2, role: .selection,
-                chapterLabel: "悩みと希望の選択",
-                headline: "いま、いちばん困っているのは？",
-                subtitle: "選んだ答えに合わせて、これからの案内をそろえます。",
-                tone: .single,
-                heroSymbol: "hand.tap",
-                heroDescription: "具体的な場面を表す4つの選択肢リスト。選ぶと自動で次のページへ進む",
-                heroAnimationMeaning: "選択肢カードが順番に浮かび上がり、ここを選んでほしいことを伝える",
-                ambientElementCount: 0,
-                requiresChoiceToAdvance: true,
-                reactionLevel: .mediumConcern,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 2, pageNumber: 3, role: .match,
-                chapterLabel: "あなたへの提案",
-                headline: concern.matchHeadline,
-                subtitle: concern.matchSubtitle,
-                tone: primaryTone,
-                heroSymbol: concern.optionSymbol,
-                heroDescription: "選んだ悩みのバッジとOneClipのバッジが中央で重なり1つにつながる図",
-                heroAnimationMeaning: "2つの図形が寄って重なり1つになる動きで、あなたの悩みとアプリの目的がぴったり合うことを伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 3, pageNumber: 4, role: .identity,
-                chapterLabel: "OneClipとは",
-                headline: "必要なところを集めて、ひと貼りで伝える",
-                subtitle: "メニューバーに静かに常駐し、呼び出した瞬間だけ働く道具です。",
-                tone: .single,
-                heroSymbol: "menubar.rectangle",
-                heroDescription: "macOSのメニューバーからOneClipメニューが開き、範囲をコピーと集めてコピーが並ぶ図",
-                heroAnimationMeaning: "メニューバーのアイコンが一度光りメニューが開く動きで、作業を邪魔せずいつでも呼び出せる姿を目立たせる",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: nil
-            ),
-            firstValue,
-            secondValue,
-            OnboardingPageSpec(
-                index: 6, pageNumber: 7, role: .step,
-                chapterLabel: "使い方のステップ1",
-                headline: "1. メニューから撮り方を選ぶ",
-                subtitle: "1箇所なら「範囲をコピー」、複数なら「集めてコピー」を押します。",
-                tone: .single,
-                heroSymbol: "1.circle.fill",
-                heroDescription: "ステップ1：上部のOneClipメニューから撮影モードを選択する画面モック",
-                heroAnimationMeaning: "番号1が強調されメニュー項目が一度だけ光る動きで、最初の手順であるメニュー選択を目立たせる",
-                ambientElementCount: 1,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: 1
-            ),
-            OnboardingPageSpec(
-                index: 7, pageNumber: 8, role: .step,
-                chapterLabel: "使い方のステップ2",
-                headline: "2. 伝えたい範囲をドラッグで囲む",
-                subtitle: "矢印キーで位置や大きさを微調整することもできます。",
-                tone: primaryTone,
-                heroSymbol: "2.circle.fill",
-                heroDescription: "ステップ2：同じ画面モックの上で点線の選択枠がドラッグで広がる図",
-                heroAnimationMeaning: "カーソルが動き点線の選択枠が描かれる動きで、必要な範囲だけを直感的に切り取る操作を伝える",
-                ambientElementCount: 1,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: 2
-            ),
-            OnboardingPageSpec(
-                index: 8, pageNumber: 9, role: .step,
-                chapterLabel: "使い方のステップ3",
-                headline: "3. そのまま好きな場所へ貼り付ける",
-                subtitle: "コピーと自動保存が同時に終わり、すぐ相手へ渡せます。",
-                tone: .collection,
-                heroSymbol: "3.circle.fill",
-                heroDescription: "ステップ3：右下に完了プレビューが現れ、クリップボードへ画像が収まる図",
-                heroAnimationMeaning: "切り取った画像がクリップボードへ収まりチェックが光る動きで、すぐ貼り付けられる達成状態を伝える",
-                ambientElementCount: 1,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: 3
-            ),
-            OnboardingPageSpec(
-                index: 9, pageNumber: 10, role: .interaction,
-                chapterLabel: "ミニ試し操作",
-                headline: "試しに、切り取る範囲を選んでみましょう",
-                subtitle: "実際の画面は撮りません。キャンバスをドラッグするか枠を押します。",
-                tone: primaryTone,
-                heroSymbol: "viewfinder.rectangular",
-                heroDescription: "架空の作業キャンバスにある3つの範囲枠。ドラッグまたは押下で選ぶと自動で結果ページへ進む",
-                heroAnimationMeaning: "選択候補の点線枠が穏やかに脈打ち、ドラッグやクリックに吸着して本物の範囲選択の手応えを伝える",
-                ambientElementCount: 0,
-                requiresChoiceToAdvance: true,
-                reactionLevel: .mediumTrial,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 10, pageNumber: 11, role: .match,
-                chapterLabel: "試し操作の結果",
-                headline: "切り取り完了！ すぐ貼れる1枚になります",
-                subtitle: "選んだ「\(trialSample.title)（\(trialSample.dimensionsLabel)）」が1枚のPNGとして整いました。",
-                tone: primaryTone,
-                heroSymbol: "checkmark.seal.fill",
-                heroDescription: "試し操作で選んだ範囲が右下プレビューとクリップボードに収まった完成モック",
-                heroAnimationMeaning: "完成したプレビューカードが一度だけ広がって収まる動きで、切り取り成功の達成感を伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 11, pageNumber: 12, role: .expectation,
-                chapterLabel: "これからの体験",
-                headline: "伝える時間が減り、本来の作業に集中できる",
-                subtitle: "画像はすべてこのMac内だけに保存され、外部へは送信されません。",
-                tone: .collection,
-                heroSymbol: "lock.shield",
-                heroDescription: "整った1枚の完成シートとMac内保存の保護アイコンが並んだ図",
-                heroAnimationMeaning: "シートが整い保護バッジが静かに灯る動きで、これからの快適な作業とローカル保存の安心感を伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: nil, stepNumber: nil
-            ),
-            OnboardingPageSpec(
-                index: 12, pageNumber: 13, role: .connection,
-                chapterLabel: "最初の1歩",
-                headline: concern.connectionHeadline,
-                subtitle: "30秒で試せます。必要なときだけ画面収録の許可を案内します。",
-                tone: primaryTone,
-                heroSymbol: concern.prefersCollection ? "square.stack" : "viewfinder",
-                heroDescription: "画面上部のOneClipメニュー入口と、最初の案内を開く開始ボタン",
-                heroAnimationMeaning: "開始ボタンが静かに脈打つ動きで、ここを押して本体の最初の成功へ進むことを伝える",
-                ambientElementCount: 0,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .large,
-                valueTopic: nil, stepNumber: nil
-            )
+            .init(index: 0, role: .identity, headline: "必要なところを、ひと貼り",
+                  subtitle: "画面上部のOneClipメニューから撮り方を選びます。", tone: .single,
+                  heroDescription: "OneClipメニュー。範囲をコピーは1箇所、集めてコピーは最大4枚を1枚にまとめます。"),
+            .init(index: 1, role: .selection, headline: "何を伝えたいですか？",
+                  subtitle: "使い始める撮り方を選びます。あとから変更できます。", tone: .single,
+                  heroDescription: "用途を選ぶ4つのボタン。選ぶと範囲選択の練習へ進みます。"),
+            .init(index: 2, role: .interaction, headline: "試しに範囲を選ぶ",
+                  subtitle: "枠をクリック、またはドラッグします。実際の画面の撮影・コピー・保存は行いません。", tone: tone,
+                  heroDescription: "架空の画面にある3つの範囲。ドラッグまたはボタンで選べます。"),
+            .init(index: 3, role: .match, headline: "撮影後は、ここから注釈",
+                  subtitle: "本番では右下の小画像からコメントや記号を追加できます。", tone: tone,
+                  heroDescription: "選んだ「\(trialSample.title)」の見本。小画像にコメント・記号を追加する入口があります。"),
+            .init(index: 4, role: .connection, headline: "メニューから始めましょう",
+                  subtitle: "撮影画像はこのMacへ自動保存されます。必要なときだけ画面収録の許可を案内します。", tone: tone,
+                  heroDescription: concern.connectionButtonTitle)
         ]
-    }
-
-    private static func valueSpec(for topic: OnboardingValueTopic, index: Int, pageNumber: Int, orderLabel: String) -> OnboardingPageSpec {
-        switch topic {
-        case .collectionStack:
-            return OnboardingPageSpec(
-                index: index, pageNumber: pageNumber, role: .value,
-                chapterLabel: "得られる変化\(orderLabel)",
-                headline: "バラバラの画面が、縦1枚の画像に整う",
-                subtitle: "最大4枚まで、撮った順番のまま1枚のPNGへきれいに並びます。",
-                tone: .collection,
-                heroSymbol: "rectangle.stack",
-                heroDescription: "別々の3つの範囲が右側で縦1枚の完成画像に整列する図",
-                heroAnimationMeaning: "3つの切り抜きピースが順番に積み重なり1枚の枠に収まる動きで、貼り直しの手間が消える変化を伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: .collectionStack, stepNumber: nil
-            )
-        case .annotationCallout:
-            return OnboardingPageSpec(
-                index: index, pageNumber: pageNumber, role: .value,
-                chapterLabel: "得られる変化\(orderLabel)",
-                headline: "吹き出しと囲みで、見たい場所がすぐ伝わる",
-                subtitle: "撮った直後のプレビューから、コメントや番号を書き込めます。",
-                tone: .single,
-                heroSymbol: "text.bubble",
-                heroDescription: "画像の上に四角囲みと番号バッジ、吹き出しコメントが添えられた図",
-                heroAnimationMeaning: "囲み枠が描かれ吹き出しがポンと現れる動きで、長い説明文を書かずに注目箇所が伝わる変化を目立たせる",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: .annotationCallout, stepNumber: nil
-            )
-        case .instantSingleCopy:
-            return OnboardingPageSpec(
-                index: index, pageNumber: pageNumber, role: .value,
-                chapterLabel: "得られる変化\(orderLabel)",
-                headline: "1箇所なら、囲んで離すだけで即コピー",
-                subtitle: "クリップボードへのコピーとMacへの自動保存が一度で終わります。",
-                tone: .single,
-                heroSymbol: "bolt.horizontal.circle",
-                heroDescription: "画面の1箇所をドラッグして離した瞬間にクリップボードへ収まる図",
-                heroAnimationMeaning: "選択枠からクリップボードへ素早く矢印が流れる動きで、待ち時間なくすぐ貼れる軽快さを伝える",
-                ambientElementCount: 2,
-                requiresChoiceToAdvance: false,
-                reactionLevel: .small,
-                valueTopic: .instantSingleCopy, stepNumber: nil
-            )
-        }
     }
 }
 
@@ -1970,16 +1661,7 @@ struct OneClipOnboardingView: View {
     @State private var currentPage = 0
     @State private var selectedConcern: OnboardingConcern
     @State private var selectedTrialSample: OnboardingTrialSample
-    @State private var praiseBank = OnboardingPraiseBank()
-    @State private var activePraiseMessage: String?
-    @State private var activeReactionLevel: OnboardingReactionLevel = .small
-    @State private var praiseRevision = 0
-    @State private var reactionBounce = false
-    @State private var autoAdvanceToken = 0
-    @State private var isAutoAdvancing = false
     @State private var heroEntered = false
-    @State private var ambientPhaseA = false
-    @State private var ambientStarted = false
     @State private var mockDragStart: CGPoint?
     @State private var mockDragCurrent: CGPoint?
 
@@ -2017,71 +1699,31 @@ struct OneClipOnboardingView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             topNavigationBar
+            headlineAndSubtitleSection
             heroStageView
                 .frame(height: 224)
                 .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if !page.requiresChoiceToAdvance && page.role != .connection {
-                        advanceWithSmallReaction()
-                    }
-                }
                 .accessibilityElement(children: page.requiresChoiceToAdvance ? .contain : .ignore)
                 .accessibilityLabel(page.heroDescription)
-                .accessibilitySortPriority(2)
-
-            headlineAndSubtitleSection
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if !page.requiresChoiceToAdvance && page.role != .connection {
-                        advanceWithSmallReaction()
-                    }
-                }
-
             bottomActionSection
-                .accessibilitySortPriority(1)
         }
         .oneClipWindow(padding: 26)
         .frame(width: 520, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
-        .gesture(
-            DragGesture(minimumDistance: 28, coordinateSpace: .local)
-                .onEnded { value in
-                    guard !page.requiresChoiceToAdvance else { return }
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    if value.translation.width < -28 {
-                        if currentPage < pages.count - 1 {
-                            advanceWithSmallReaction()
-                        }
-                    } else if value.translation.width > 28 {
-                        goBackNeutral()
-                    }
-                }
-        )
         .onAppear {
             recordView(for: 0)
-            startAmbientAnimationsIfNeeded()
             triggerPageAnimations()
         }
         .onChange(of: currentPage) { _, newPage in
             pageChanged(newPage)
             recordView(for: newPage)
-            if pages[min(max(0, newPage), pages.count - 1)].requiresChoiceToAdvance && !isAutoAdvancing {
-                praiseRevision &+= 1
-                activePraiseMessage = nil
-            }
             triggerPageAnimations()
             contentSizeChanged()
         }
-        .onChange(of: reduceMotion) { _, _ in
-            startAmbientAnimationsIfNeeded()
-        }
-        .onExitCommand {
-            skipped(currentPage)
-        }
+        .onExitCommand { skipped(currentPage) }
     }
 
-    // MARK: Top Bar (Window Dots + Consistent Back / Skip)
+    // MARK: Navigation
 
     private var topNavigationBar: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -2099,17 +1741,14 @@ struct OneClipOnboardingView: View {
             OnboardingWindowDotsView(
                 currentPage: currentPage,
                 totalPages: pages.count,
-                accentColor: accentColor,
-                isConnectionPage: page.role == .connection
+                accentColor: accentColor
             )
-            .accessibilityHidden(true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("全\(pages.count)ページ中\(currentPage + 1)ページ")
 
             Spacer(minLength: 0)
 
             Button("スキップ") {
-                // Skip never triggers praise or success haptics.
-                autoAdvanceToken &+= 1
-                isAutoAdvancing = false
                 skipped(currentPage)
             }
             .buttonStyle(.borderless)
@@ -2118,44 +1757,19 @@ struct OneClipOnboardingView: View {
         }
     }
 
-    // MARK: Headline & Subtitle (1 Claim Per Page, Accessibility Priority 4 & 3)
-
     private var headlineAndSubtitleSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(page.chapterLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(accentColor)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 3)
-                    .background(accentColor.opacity(0.12), in: Capsule())
-                Spacer(minLength: 0)
-            }
-            .accessibilityHidden(true)
-
             Text(page.headline)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .fixedSize(horizontal: false, vertical: true)
-                .accessibilityLabel("\(page.chapterLabel)。\(page.headline)")
-                .accessibilitySortPriority(4)
-
-            if !page.subtitle.isEmpty {
-                Text(page.subtitle)
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilitySortPriority(3)
-            }
+            Text(page.subtitle)
+                .font(.body).foregroundStyle(.secondary).lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(minHeight: 88, alignment: .topLeading)
-        .padding(.horizontal, 2)
     }
 
-    // MARK: Hero Stage (Visual Protagonist + 2-Layer Animation)
+    // MARK: Synthetic illustrations and practice
 
     private var heroStageView: some View {
         ZStack {
@@ -2167,7 +1781,6 @@ struct OneClipOnboardingView: View {
 
             stageContent(for: page)
                 .padding(18)
-                .scaleEffect(reactionBounce && !reduceMotion ? (activeReactionLevel == .large ? 1.05 : 1.025) : 1.0)
                 .opacity(heroEntered ? 1.0 : 0.0)
                 .offset(y: heroEntered || reduceMotion ? 0 : 8)
         }
@@ -2176,86 +1789,22 @@ struct OneClipOnboardingView: View {
 
     @ViewBuilder
     private func stageContent(for spec: OnboardingPageSpec) -> some View {
-        switch spec.index {
-        case 0:
-            hookStageView
-        case 1:
-            concernSelectionStageView
-        case 2:
-            matchResultStageView
-        case 3:
-            identityStageView
-        case 4, 5:
-            valueStageView(topic: spec.valueTopic ?? .collectionStack)
-        case 6, 7, 8:
-            stepStageView(step: spec.stepNumber ?? 1)
-        case 9:
-            interactionTrialStageView
-        case 10:
-            trialResultStageView
-        case 11:
-            expectationStageView
-        default:
-            connectionStageView
+        switch spec.role {
+        case .identity: identityStageView
+        case .selection: concernSelectionStageView
+        case .interaction: interactionTrialStageView
+        case .match: trialResultStageView
+        case .connection: connectionStageView
         }
     }
 
-    // #1 フック：3枚のカードが1枚のボードに吸い込まれて整列
-    private var hookStageView: some View {
-        HStack(spacing: 22) {
-            VStack(spacing: 8) {
-                ForEach(0..<3, id: \.self) { idx in
-                    HStack(spacing: 8) {
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(accentColor.opacity(0.35))
-                            .frame(width: 24, height: 16)
-                        Capsule()
-                            .fill(Color.primary.opacity(0.18))
-                            .frame(width: CGFloat(56 - idx * 8), height: 6)
-                    }
-                    .padding(8)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .offset(x: heroEntered || reduceMotion ? CGFloat(idx * 4) : CGFloat(-18 + idx * 6),
-                            y: heroEntered || reduceMotion ? 0 : CGFloat((idx - 1) * 10))
-                }
-            }
-
-            Image(systemName: "arrow.right.circle.fill")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(accentColor)
-                .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.75)
-
-            VStack(spacing: 5) {
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.on.clipboard.fill")
-                        .font(.caption)
-                        .foregroundStyle(accentColor)
-                    Text("1枚のPNG")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(accentColor)
-                }
-                VStack(spacing: 4) {
-                    ForEach(0..<3, id: \.self) { idx in
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .fill(accentColor.opacity(0.22 + Double(idx) * 0.08))
-                            .frame(width: 92, height: 22)
-                    }
-                }
-                .padding(8)
-                .background(accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(accentColor.opacity(0.45), lineWidth: 1.5))
-            }
-            .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.88)
-        }
-    }
-
-    // #2 選択（悩み・希望）：次へボタンなし、押すと中段階の反応のあと自動遷移
+    // Choosing a use case advances directly to the synthetic practice.
     private var concernSelectionStageView: some View {
         VStack(spacing: 8) {
-            ForEach(Array(OnboardingConcern.allCases.enumerated()), id: \.element.id) { index, option in
-                let isSelected = selectedConcern == option && isAutoAdvancing
+            ForEach(OnboardingConcern.allCases) { option in
+                let isSelected = selectedConcern == option
                 Button {
-                    chooseConcern(option, seed: index)
+                    chooseConcern(option)
                 } label: {
                     HStack(spacing: 12) {
                         Image(systemName: option.optionSymbol)
@@ -2268,7 +1817,7 @@ struct OneClipOnboardingView: View {
                         Text(option.optionTitle)
                             .font(.callout.weight(selectedConcern == option ? .semibold : .regular))
                             .foregroundStyle(.primary)
-                            .lineLimit(1)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
                             .font(.system(size: 14, weight: .semibold))
@@ -2285,7 +1834,6 @@ struct OneClipOnboardingView: View {
                             .strokeBorder(isSelected ? accentColor : Color.primary.opacity(contrast == .increased ? 0.35 : 0.08),
                                           lineWidth: isSelected ? 1.5 : 1)
                     )
-                    .scaleEffect(isSelected && !reduceMotion ? 1.025 : 1.0)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(option.optionTitle)。押すと自動で次のページへ進みます")
@@ -2293,30 +1841,7 @@ struct OneClipOnboardingView: View {
         }
     }
 
-    // #3 マッチ（結果のページ）：2つのバッジが中央へ寄って重なり1つになる
-    private var matchResultStageView: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: heroEntered || reduceMotion ? -10 : 34) {
-                OneClipBadge(systemName: selectedConcern.optionSymbol, tone: page.tone, size: 64)
-                OneClipBadge(systemName: "viewfinder", tone: .single, size: 64)
-            }
-            .padding(.top, 4)
-
-            HStack(spacing: 8) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(accentColor)
-                Text(selectedConcern.optionTitle)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(accentColor.opacity(0.10), in: Capsule())
-        }
-    }
-
-    // #4 アイデンティティ：メニューバーから静かに開く2つの入口
+    // The two capture modes share the existing menu labels.
     private var identityStageView: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
@@ -2374,153 +1899,9 @@ struct OneClipOnboardingView: View {
         .frame(maxWidth: 360)
     }
 
-    // #5 / #6 価値：選んだ悩みに応じて順番が変わる1価値1ページ
-    @ViewBuilder
-    private func valueStageView(topic: OnboardingValueTopic) -> some View {
-        switch topic {
-        case .collectionStack:
-            CaptureUsageDiagram(collection: true)
-                .scaleEffect(heroEntered || reduceMotion ? 1.15 : 0.96)
-        case .annotationCallout:
-            HStack(spacing: 18) {
-                ZStack(alignment: .topLeading) {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Color.primary.opacity(0.04))
-                        .frame(width: 190, height: 120)
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.primary.opacity(0.16)))
-
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(accentColor, lineWidth: 2)
-                        .frame(width: 86, height: 48)
-                        .offset(x: 22, y: 26)
-
-                    Text("1")
-                        .font(.caption.bold())
-                        .foregroundStyle(.white)
-                        .frame(width: 20, height: 20)
-                        .background(accentColor, in: Circle())
-                        .offset(x: 14, y: 16)
-
-                    HStack(spacing: 4) {
-                        Image(systemName: "text.bubble.fill")
-                            .font(.caption2)
-                        Text("ここを確認")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(accentColor, in: Capsule())
-                    .offset(x: 82, y: 78)
-                    .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.7)
-                }
-            }
-        case .instantSingleCopy:
-            CaptureUsageDiagram(collection: false)
-                .scaleEffect(heroEntered || reduceMotion ? 1.15 : 0.96)
-        }
-    }
-
-    // #7 / #8 / #9 ステップ（3ページ共通構図で変化する部分だけを動かす）
-    private func stepStageView(step: Int) -> some View {
-        HStack(spacing: 18) {
-            ZStack {
-                Circle()
-                    .fill(accentColor.opacity(0.15))
-                    .frame(width: 58, height: 58)
-                Text("\(step)")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(accentColor)
-            }
-            .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.82)
-
-            ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.primary.opacity(0.035))
-                    .frame(width: 270, height: 136)
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.primary.opacity(0.15)))
-
-                // Top menu bar inside mock
-                HStack(spacing: 6) {
-                    Circle().fill(Color.primary.opacity(0.2)).frame(width: 6, height: 6)
-                    Text("OneClip")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(step == 1 ? accentColor.opacity(0.25) : Color.clear, in: Capsule())
-                    Spacer()
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(Color.primary.opacity(0.05))
-
-                if step == 1 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Label("範囲をコピー", systemImage: "viewfinder")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                            .background(accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        Label("集めてコピー…", systemImage: "square.stack")
-                            .font(.caption)
-                            .padding(.horizontal, 8).padding(.vertical, 4)
-                    }
-                    .padding(8)
-                    .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(accentColor.opacity(0.45)))
-                    .offset(x: 24, y: 28)
-                } else if step == 2 {
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(accentColor.opacity(0.14))
-                        .frame(width: heroEntered || reduceMotion ? 150 : 90, height: heroEntered || reduceMotion ? 74 : 46)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .stroke(accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
-                        )
-                        .offset(x: 46, y: 38)
-                    Image(systemName: "cursorarrow")
-                        .font(.system(size: 16, weight: .semibold))
-                        .offset(x: heroEntered || reduceMotion ? 192 : 132, y: heroEntered || reduceMotion ? 106 : 78)
-                } else {
-                    HStack(spacing: 14) {
-                        VStack(spacing: 4) {
-                            Image(systemName: "doc.on.clipboard.fill")
-                                .font(.system(size: 26))
-                                .foregroundStyle(accentColor)
-                            Text("コピー完了")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .padding(10)
-                        .background(accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(accentColor)
-                                Text("自動保存済み")
-                                    .font(.caption.weight(.semibold))
-                            }
-                            Text("右下の小画像から注釈も追加可能")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .offset(x: 24, y: 44)
-                }
-            }
-        }
-    }
-
-    // #10 インタラクション（ミニ試し操作）：架空キャンバスのドラッグまたは枠クリックで切り取り体験
+    // The practice uses shapes only and never captures, saves or copies.
     private var interactionTrialStageView: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "cursorarrow.and.square.on.square.dashed")
-                    .foregroundStyle(accentColor)
-                Text("気になる枠を押すか、ドラッグで囲むと切り取れます（次へボタンなし）")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
-
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .fill(Color.primary.opacity(0.03))
@@ -2530,10 +1911,9 @@ struct OneClipOnboardingView: View {
                     )
 
                 HStack(spacing: 10) {
-                    ForEach(Array(OnboardingTrialSample.allCases.enumerated()), id: \.element.id) { idx, sample in
-                        let isPicked = selectedTrialSample == sample && isAutoAdvancing
+                    ForEach(OnboardingTrialSample.allCases) { sample in
                         Button {
-                            completeMiniTrial(with: sample, seed: idx)
+                            completeMiniTrial(with: sample)
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
@@ -2549,13 +1929,13 @@ struct OneClipOnboardingView: View {
                                     .font(.callout.weight(.semibold))
                                     .foregroundStyle(.primary)
                                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                                    .fill(accentColor.opacity(isPicked ? 0.35 : 0.14))
+                                    .fill(accentColor.opacity(0.14))
                                     .frame(height: 28)
                                     .overlay(
                                         HStack(spacing: 4) {
-                                            Image(systemName: isPicked ? "checkmark.circle.fill" : "viewfinder")
+                                            Image(systemName: "viewfinder")
                                                 .font(.caption2)
-                                            Text(isPicked ? "選択完了" : "ここを切り取る")
+                                            Text("ここを選ぶ")
                                                 .font(.caption2.weight(.medium))
                                         }
                                         .foregroundStyle(accentColor)
@@ -2565,14 +1945,13 @@ struct OneClipOnboardingView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(isPicked ? accentColor.opacity(0.15) : Color(nsColor: .windowBackgroundColor))
+                                    .fill(Color(nsColor: .windowBackgroundColor))
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(accentColor.opacity(isPicked ? 0.9 : 0.45),
-                                                  style: StrokeStyle(lineWidth: isPicked ? 2 : 1.2, dash: isPicked ? [] : [5, 3]))
+                                    .strokeBorder(accentColor.opacity(0.45),
+                                                  style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
                             )
-                            .scaleEffect(isPicked && !reduceMotion ? 1.04 : 1.0)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(sample.title)、\(sample.dimensionsLabel)。押すと切り取って結果ページへ進みます")
@@ -2612,13 +1991,13 @@ struct OneClipOnboardingView: View {
                         } else {
                             picked = .afterResult
                         }
-                        completeMiniTrial(with: picked, seed: 1)
+                        completeMiniTrial(with: picked)
                     }
             )
         }
     }
 
-    // #11 マッチ（試し操作の結果）：選んだ架空範囲がプレビューとクリップボードに収まった完成図
+    // The result is explicitly a mock, with the annotation entry shown.
     private var trialResultStageView: some View {
         HStack(spacing: 18) {
             VStack(alignment: .leading, spacing: 8) {
@@ -2627,7 +2006,7 @@ struct OneClipOnboardingView: View {
                         .font(.system(size: 20))
                         .foregroundStyle(accentColor)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("コピーと保存の準備完了")
+                        Text("切り取りの見本")
                             .font(.callout.weight(.semibold))
                         Text("\(selectedTrialSample.title)・\(selectedTrialSample.dimensionsLabel)")
                             .font(.caption.monospacedDigit())
@@ -2650,36 +2029,16 @@ struct OneClipOnboardingView: View {
         }
     }
 
-    // #12 期待：スッキリ整ったシートとローカル保存の安心感
-    private var expectationStageView: some View {
-        HStack(spacing: 22) {
-            VStack(spacing: 6) {
-                OneClipBadge(systemName: "sparkles.rectangle.stack", tone: .collection, size: 58)
-                Text("ひと貼りで共有")
-                    .font(.caption.weight(.semibold))
-            }
-            Image(systemName: "plus")
-                .font(.callout.weight(.semibold))
-                .foregroundStyle(.secondary)
-            VStack(spacing: 6) {
-                OneClipBadge(systemName: "lock.shield", tone: .single, size: 58)
-                Text("このMac内だけに保存")
-                    .font(.caption.weight(.semibold))
-            }
-        }
-        .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.9)
-    }
-
-    // #13 接続：画面上部のメニュー入口と、静かに脈打つ開始ボタン予告
+    // Continue to the mode guide without starting a capture.
     private var connectionStageView: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
                 OneClipBadge(systemName: selectedConcern.prefersCollection ? "square.stack" : "viewfinder",
                              tone: page.tone, size: 52)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(selectedConcern.prefersCollection ? "最初のおすすめ：集めてコピー" : "最初のおすすめ：範囲をコピー")
+                    Text(selectedConcern.prefersCollection ? "集めてコピー" : "範囲をコピー")
                         .font(.headline)
-                    Text("試し操作の「\(selectedTrialSample.title)」と同じ感覚で、メニューからすぐ始められます。")
+                    Text(selectedConcern.prefersCollection ? "最大4枚を選ぶ → コピー → ⌘Vで貼り付け" : "範囲を選ぶ → ⌘Vで貼り付け")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -2692,229 +2051,54 @@ struct OneClipOnboardingView: View {
         }
     }
 
-    // MARK: Bottom Action Section (Praise Banner + Action Button)
-
     private var bottomActionSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ZStack(alignment: .leading) {
-                if let message = activePraiseMessage {
-                    HStack(spacing: 8) {
-                        Image(systemName: activeReactionLevel == .small ? "checkmark.circle" : "hands.clap.fill")
-                            .foregroundStyle(accentColor)
-                        Text(message)
-                            .font(.callout.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .transition(.opacity)
+        HStack {
+            Spacer(minLength: 0)
+            if page.role == .connection {
+                Button(selectedConcern.connectionButtonTitle) {
+                    completed(selectedConcern, selectedTrialSample)
                 }
-            }
-            .frame(height: 36)
-
-            HStack(alignment: .center, spacing: 12) {
-                if page.requiresChoiceToAdvance {
-                    Text("上の選択肢を押すと、自動で次のページへ進みます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                } else if page.role == .connection {
-                    Text("メニューからいつでも見返せます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button(action: finishWithLargeReaction) {
-                        Label(selectedConcern.connectionButtonTitle, systemImage: "arrow.right.circle.fill")
-                    }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            } else if !page.requiresChoiceToAdvance {
+                Button("次へ", action: advance)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.large)
-                    .tint(accentColor)
-                    .scaleEffect(!reduceMotion && ambientPhaseA ? 1.025 : 1.0)
-                } else {
-                    Text("画面のタップやスワイプでも進めます。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    Button("次へ", action: advanceWithSmallReaction)
-                        .keyboardShortcut(.defaultAction)
-                        .buttonStyle(.borderedProminent)
-                        .buttonBorderShape(.capsule)
-                        .controlSize(.large)
-                        .tint(accentColor)
-                }
             }
         }
+        .buttonBorderShape(.capsule).controlSize(.large).tint(accentColor)
     }
 
-    // MARK: Interactions, Praise, Haptics & Transitions
-
-    private func showPraise(_ message: String, level: OnboardingReactionLevel, durationMilliseconds: Int) {
-        praiseRevision &+= 1
-        let revision = praiseRevision
-        activeReactionLevel = level
-        withAnimation(.easeInOut(duration: 0.15)) {
-            activePraiseMessage = message
-        }
-        guard durationMilliseconds > 0 else { return }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(durationMilliseconds))
-            guard praiseRevision == revision else { return }
-            withAnimation(.easeOut(duration: 0.20)) {
-                activePraiseMessage = nil
-            }
-        }
-    }
-
-    private func performHaptic(for level: OnboardingReactionLevel) {
-        let performer = NSHapticFeedbackManager.defaultPerformer
-        switch level {
-        case .small:
-            performer.perform(.alignment, performanceTime: .now)
-        case .mediumConcern, .mediumTrial:
-            performer.perform(.levelChange, performanceTime: .now)
-        case .large:
-            performer.perform(.generic, performanceTime: .now)
-        }
-    }
-
-    private func advanceWithSmallReaction() {
-        guard currentPage < pages.count - 1 else { return }
-        autoAdvanceToken &+= 1
-        isAutoAdvancing = false
-        let nextIndex = currentPage + 1
-        let nextRequiresChoice = pages[min(nextIndex, pages.count - 1)].requiresChoiceToAdvance
-        if nextRequiresChoice {
-            praiseRevision &+= 1
-            activePraiseMessage = nil
-        } else {
-            showPraise(praiseBank.nextMessage(for: .small, preferredSeed: currentPage),
-                       level: .small, durationMilliseconds: 1400)
-        }
-        performHaptic(for: .small)
-        triggerBounce()
-        withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.28, dampingFraction: 0.84)) {
-            currentPage = nextIndex
-        }
+    private func advance() {
+        guard !page.requiresChoiceToAdvance, currentPage < pages.count - 1 else { return }
+        currentPage += 1
     }
 
     private func goBackNeutral() {
         guard currentPage > 0 else { return }
-        // Going back has no praise and no success haptic.
-        autoAdvanceToken &+= 1
-        isAutoAdvancing = false
-        praiseRevision &+= 1
-        activePraiseMessage = nil
-        withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.28, dampingFraction: 0.84)) {
-            currentPage -= 1
-        }
+        currentPage -= 1
     }
 
-    private func chooseConcern(_ concern: OnboardingConcern, seed: Int) {
-        guard !isAutoAdvancing else { return }
+    private func chooseConcern(_ concern: OnboardingConcern) {
+        guard page.role == .selection else { return }
         selectedConcern = concern
         preferences.recordOnboardingEvent(.concernSelected(concern))
-        isAutoAdvancing = true
-        autoAdvanceToken &+= 1
-        let token = autoAdvanceToken
-        showPraise(praiseBank.nextMessage(for: .mediumConcern, preferredSeed: seed),
-                   level: .mediumConcern, durationMilliseconds: 2400)
-        performHaptic(for: .mediumConcern)
-        triggerBounce()
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(320))
-            guard autoAdvanceToken == token else { return }
-            isAutoAdvancing = false
-            withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.30, dampingFraction: 0.84)) {
-                currentPage = 2
-            }
-        }
+        currentPage += 1
     }
 
-    private func completeMiniTrial(with sample: OnboardingTrialSample, seed: Int) {
-        guard !isAutoAdvancing else { return }
+    private func completeMiniTrial(with sample: OnboardingTrialSample) {
+        guard page.role == .interaction else { return }
         selectedTrialSample = sample
         preferences.recordOnboardingEvent(.trialCompleted(sample))
-        isAutoAdvancing = true
-        autoAdvanceToken &+= 1
-        let token = autoAdvanceToken
-        showPraise(praiseBank.nextMessage(for: .mediumTrial, preferredSeed: seed),
-                   level: .mediumTrial, durationMilliseconds: 2400)
-        performHaptic(for: .mediumTrial)
-        triggerBounce()
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(320))
-            guard autoAdvanceToken == token else { return }
-            isAutoAdvancing = false
-            withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.30, dampingFraction: 0.84)) {
-                currentPage = 10
-            }
-        }
-    }
-
-    private func finishWithLargeReaction() {
-        guard !isAutoAdvancing else { return }
-        isAutoAdvancing = true
-        autoAdvanceToken &+= 1
-        let token = autoAdvanceToken
-        showPraise(praiseBank.nextMessage(for: .large, preferredSeed: 0),
-                   level: .large, durationMilliseconds: 0)
-        performHaptic(for: .large)
-        triggerBounce()
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(340))
-            guard autoAdvanceToken == token else { return }
-            isAutoAdvancing = false
-            completed(selectedConcern, selectedTrialSample)
-        }
-    }
-
-    private func triggerBounce() {
-        if reduceMotion {
-            reactionBounce = false
-            return
-        }
-        withAnimation(.spring(response: 0.18, dampingFraction: 0.55)) {
-            reactionBounce = true
-        }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(220))
-            withAnimation(.easeOut(duration: 0.15)) {
-                reactionBounce = false
-            }
-        }
-    }
-
-    private func startAmbientAnimationsIfNeeded() {
-        if reduceMotion {
-            ambientPhaseA = false
-            ambientStarted = false
-            return
-        }
-        guard !ambientStarted else { return }
-        ambientStarted = true
-        withAnimation(.easeInOut(duration: 2.8).repeatForever(autoreverses: true)) {
-            ambientPhaseA = true
-        }
+        currentPage += 1
     }
 
     private func triggerPageAnimations() {
         heroEntered = false
         if reduceMotion {
-            withAnimation(.easeInOut(duration: 0.18)) {
-                heroEntered = true
-            }
+            heroEntered = true
         } else {
-            withAnimation(.spring(response: 0.36, dampingFraction: 0.80)) {
-                heroEntered = true
-            }
+            withAnimation(.easeOut(duration: 0.18)) { heroEntered = true }
         }
     }
 
@@ -2929,7 +2113,6 @@ private struct OnboardingWindowDotsView: View {
     let currentPage: Int
     let totalPages: Int
     let accentColor: Color
-    let isConnectionPage: Bool
 
     var body: some View {
         let items = OnboardingWindowDots.compute(currentPage: currentPage, totalPages: totalPages)
@@ -2940,12 +2123,11 @@ private struct OnboardingWindowDotsView: View {
                     .frame(width: dotWidth(for: item), height: dotHeight(for: item))
             }
         }
-        .animation(.spring(response: 0.28, dampingFraction: 0.82), value: currentPage)
         .allowsHitTesting(false)
     }
 
     private func dotColor(for item: OnboardingWindowDots.DotItem) -> Color {
-        if isConnectionPage || item.isCurrent {
+        if item.isCurrent {
             return accentColor
         }
         return Color.primary.opacity(item.scaleKind == .edgeCompressed ? 0.16 : 0.26)

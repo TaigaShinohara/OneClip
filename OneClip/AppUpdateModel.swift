@@ -119,7 +119,8 @@ struct AppUpdateSessionState: Sendable, Equatable {
     private(set) var sessionID: UUID?
     private(set) var channel = AppUpdateChannel.stable
     private(set) var phase = AppUpdatePhase.idle
-    private(set) var status = "ボタンを押すと、アップデートを確認します。"
+    static let initialStatusText = "ボタンを押すと、アップデートを確認します。"
+    private(set) var status = Self.initialStatusText
     private(set) var offeredChannel: AppUpdateChannel?
     private(set) var offeredVersion: String?
 
