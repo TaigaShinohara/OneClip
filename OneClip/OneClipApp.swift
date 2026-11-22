@@ -40,7 +40,7 @@ struct OneClipApp: App {
             #if DEBUG
             if M2FailureLab.isEnabled || M3FailureLab.isEnabled { Text("安全な試験モード・一般コピーなし") }
             #endif
-            if capture.phase != .idle { Text(capture.statusText) }
+            if capture.hasStatusNotice { Text(capture.statusText) }
             if result.hasPendingSave {
                 Text(result.message)
                 Button(result.isSaving ? "画像を保存中…" : "画像の保存を再試行") { result.retrySave() }.disabled(result.isSaving)

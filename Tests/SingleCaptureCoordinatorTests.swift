@@ -401,6 +401,7 @@ struct SingleCaptureCoordinatorTests {
     @MainActor
     static func testNormal() async throws {
         let h = try Harness()
+        try expect(!h.coordinator.hasStatusNotice, "Initial idle instructions should not occupy the menu")
         try h.beginAndSelect()
         await h.coordinator.waitForWorker()
         try expect(h.clipboard.calls == 1 && h.clipboard.successfulWrites == 1, "Normal path must write exactly once")
@@ -409,6 +410,7 @@ struct SingleCaptureCoordinatorTests {
                    "Successful operation kept retained image or worker")
         try expect(h.coordinator.problem == nil && h.interface.feedback.count == 1 && h.interface.returnCalls == 1,
                    "Success feedback/focus mismatch")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the copy result")
         h.coordinator.retryCopy()
         await Task.yield()
         try expect(h.clipboard.calls == 1, "Released image remained available for another write")
@@ -657,6 +659,7 @@ struct SingleCaptureCoordinatorTests {
         selected(h.selection)
         await Task.yield()
         try expect(h.coordinator.phase == .idle && h.coordinator.canBegin, "Esc did not return to idle")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the cancellation notice")
         try expect(h.capturer.calls == 0 && h.clipboard.calls == 0 && h.interface.feedback.isEmpty,
                    "Esc/stale callback captured or wrote")
     }
@@ -877,6 +880,7 @@ struct SingleCaptureCoordinatorTests {
         try expect(h.clipboard.calls == 0 && !h.coordinator.hasRetainedImage && h.interface.feedback.isEmpty,
                    "Protected-data revocation allowed a late write")
         try expect(h.coordinator.phase == .idle && !h.coordinator.isWorking, "Revocation stranded worker state")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the invalidation notice")
     }
 
     @MainActor
