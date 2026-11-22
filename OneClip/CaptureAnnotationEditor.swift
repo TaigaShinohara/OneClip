@@ -33,8 +33,6 @@ struct CaptureAnnotationEditorView: View {
             OneClipBadge(systemName: "pencil.tip.crop.circle", tone: .single, size: 38)
             VStack(alignment: .leading, spacing: 4) {
                 Text("画像に注釈").font(.title3.bold())
-                Text("吹き出しや囲みで、伝えたい箇所を示せます。")
-                    .font(.callout).foregroundStyle(.secondary)
                 Text("原本は残ります。コメントや囲みで、写った機密情報を隠すことはできません。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -135,29 +133,31 @@ struct CaptureAnnotationEditorView: View {
     private var inspector: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("コメント").font(.headline)
-                    Text(commentHelp).font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                TextEditor(text: $controller.commentDraft)
-                    .font(.body).focused($commentFocused)
-                    .frame(minHeight: 136, maxHeight: 180).padding(6)
-                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.16)))
-                    .disabled(!canEditComment || controller.isWorking)
-                    .accessibilityLabel("画像に付けるコメント")
-                VStack(alignment: .leading, spacing: 8) {
-                    Button("コメントを適用") { controller.applyComment() }
-                        .disabled(!canEditComment || controller.isWorking
-                                  || controller.commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Button("入力を取り消す") {
-                        controller.cancelComment()
-                        commentFocused = false
+                if canEditComment {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("コメント").font(.headline)
+                        Text(commentHelp).font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .disabled(!canEditComment || controller.isWorking)
+                    TextEditor(text: $controller.commentDraft)
+                        .font(.body).focused($commentFocused)
+                        .frame(minHeight: 136, maxHeight: 180).padding(6)
+                        .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(.primary.opacity(0.16)))
+                        .disabled(!canEditComment || controller.isWorking)
+                        .accessibilityLabel("画像に付けるコメント")
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button("コメントを適用") { controller.applyComment() }
+                            .disabled(!canEditComment || controller.isWorking
+                                      || controller.commentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button("入力を取り消す") {
+                            controller.cancelComment()
+                            commentFocused = false
+                        }
+                        .disabled(!canEditComment || controller.isWorking)
+                    }
+                    Divider()
                 }
-                Divider()
                 if let selected = controller.selectedAnnotation {
                     Label(kindTitle(selected.kind) + "を選択中", systemImage: "checkmark.circle")
                         .font(.callout.weight(.medium))
@@ -166,7 +166,7 @@ struct CaptureAnnotationEditorView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Button("選択した注釈を削除", role: .destructive) { controller.deleteSelected() }
                         .disabled(controller.isWorking)
-                } else {
+                } else if !canEditComment {
                     Text(toolHelp).font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -216,14 +216,13 @@ struct CaptureAnnotationEditorView: View {
             .disabled(controller.image == nil || controller.isWorking)
             VStack(alignment: .leading, spacing: 3) {
                 Text(controller.statusText).font(.callout).fixedSize(horizontal: false, vertical: true)
-                Text("注釈を画像に焼き込み、別のPNGとして保存します。")
-                    .font(.caption).foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             if controller.isWorking { ProgressView().controlSize(.small) }
             Button("閉じる") { _ = controller.requestClose() }.disabled(controller.isWorking)
             Button("保存してコピー") { controller.saveAndCopy() }
                 .buttonStyle(.borderedProminent).disabled(!controller.canExport || controller.isWorking)
+                .help("注釈を焼き込んだPNGを別に保存してコピーします。原本は残ります。")
         }
         .padding(.horizontal, 20).padding(.vertical, 14)
     }

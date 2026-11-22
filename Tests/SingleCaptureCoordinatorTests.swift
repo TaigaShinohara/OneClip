@@ -1038,7 +1038,7 @@ struct SingleCaptureCoordinatorTests {
         try expect(welcomeDomain.count == 1 && welcomeDomain["OneClip.hasSeenWelcome"] as? Bool == true,
                    "Explicit welcome acknowledgement persisted unexpected preference keys")
 
-        // Onboarding catalog, window-dot math, praise rotation, and persisted state
+        // Compact onboarding, window-dot math and persisted state
         defaults.removePersistentDomain(forName: suiteName)
         let onboardingStore = CapturePreferences(defaults: defaults)
         try expect(onboardingStore.shouldPresentOnboardingOnLaunch && !onboardingStore.preferredInitialCollectionMode,
@@ -1054,21 +1054,27 @@ struct SingleCaptureCoordinatorTests {
                    "Onboarding completion state was not persisted and restored")
         for concern in OnboardingConcern.allCases {
             let specs = OnboardingPageCatalog.pages(for: concern, trialSample: .issueArea)
-            try expect(specs.count == 13, "Onboarding page count must be 13")
-            try expect(specs[4].valueTopic == concern.orderedValues[0] && specs[5].valueTopic == concern.orderedValues[1],
-                       "Value pages were not ordered to match the selected concern")
+            try expect(specs.count == OnboardingPageCatalog.totalPageCount && specs.count == 5,
+                       "The compact guide must retain its five distinct steps")
+            try expect(specs.map(\.role) == [.identity, .selection, .interaction, .match, .connection],
+                       "Guide order skipped mode discovery, practice or the actual entry point")
+            try expect(specs.map(\.index) == Array(0..<specs.count),
+                       "Guide progress no longer matches persisted page events")
             for spec in specs {
                 try expect(!spec.headline.isEmpty && spec.headline.count <= 22,
                            "Headline exceeded single-claim length budget on page \(spec.pageNumber)")
-                try expect(spec.subtitle.count <= 60 && !spec.heroDescription.isEmpty && !spec.heroAnimationMeaning.isEmpty,
-                           "Page \(spec.pageNumber) missed subtitle limit or hero animation meaning")
-                try expect(spec.ambientElementCount <= 2,
-                           "Page \(spec.pageNumber) exceeded the ambient animation element limit")
+                try expect(spec.subtitle.count <= 60 && !spec.heroDescription.isEmpty,
+                           "Page \(spec.pageNumber) missed subtitle limit or accessible description")
                 try expect(!spec.headline.contains("必ず") && !spec.headline.contains("絶対に") && !spec.headline.contains("誰でも")
                            && !spec.subtitle.contains("必ず") && !spec.subtitle.contains("絶対に") && !spec.subtitle.contains("誰でも"),
                            "Page \(spec.pageNumber) contained forbidden guarantee copy")
                 try expect(spec.requiresChoiceToAdvance == (spec.role == .selection || spec.role == .interaction),
                            "Only selection and interaction pages may omit the Next button")
+            }
+            for sample in OnboardingTrialSample.allCases {
+                let result = OnboardingPageCatalog.pages(for: concern, trialSample: sample)[3]
+                try expect(result.heroDescription.contains(sample.title),
+                           "Practice result lost the selected sample's accessible description")
             }
         }
         var previousCurrentDotPage = -1
@@ -1080,18 +1086,6 @@ struct SingleCaptureCoordinatorTests {
                        && currentDots[0].pageIndex == previousCurrentDotPage + 1,
                        "Window dots did not advance by 1 on page \(pageIndex)")
             previousCurrentDotPage = currentDots[0].pageIndex
-        }
-        var praiseBank = OnboardingPraiseBank()
-        for level in [OnboardingReactionLevel.small, .mediumConcern, .mediumTrial, .large] {
-            try expect(OnboardingPraiseBank.messages(for: level).count >= 3,
-                       "Praise level \(level.rawValue) must provide at least 3 distinct phrases")
-            var lastMessage = ""
-            for step in 0..<8 {
-                let next = praiseBank.nextMessage(for: level, preferredSeed: step / 2)
-                try expect(!next.isEmpty && next != lastMessage,
-                           "Praise bank repeated consecutive message for \(level.rawValue)")
-                lastMessage = next
-            }
         }
     }
 

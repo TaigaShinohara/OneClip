@@ -1,7 +1,7 @@
 # UIカタログ：OneClip
 
-- 最終更新：2026-11-16
-- アート方針：`docs/ART_DIRECTION.md` の版 1.0 に準拠
+- 最終更新：2026-11-22
+- アート方針：`docs/ART_DIRECTION.md` の版 1.1 に準拠
 
 ## パーツ一覧
 
@@ -20,7 +20,7 @@
 | `CaptureAnnotationEditorView` | コメント・囲み・番号の注釈エディタ | `OneClip/CaptureAnnotationEditor.swift` | 使用中 |
 | `CapturePermissionContent` | 画面収録の許可案内コンテンツ | `OneClip/NativeCaptureInterface.swift` | 使用中 |
 | `CaptureGuideView` / `CaptureUsageGuideView` | 撮影前案内・使い方案内 | `OneClip/NativeCaptureInterface.swift` | 使用中 |
-| `OneClipOnboardingView` / `OnboardingWindowDotsView` | 初回オンボーディング（全13ページ、1ページ1主張、窓ドット、称賛・触覚反応、ミニ試し操作） | `OneClip/NativeCaptureInterface.swift` | 新規（`OneClipStyle`・`ART_DIRECTION.md` 準拠） |
+| `OneClipOnboardingView` / `OnboardingWindowDotsView` | 初回ガイド（全5ページ、進捗ドット、用途選択と架空の範囲選択） | `OneClip/NativeCaptureInterface.swift` | 使用中（`OneClipStyle`・`ART_DIRECTION.md` 準拠） |
 | `CaptureProblemView` / `CaptureFeedbackView` | 問題発生時・状態フィードバック表示 | `OneClip/NativeCaptureInterface.swift` | 使用中 |
 | `CaptureDiscardConfirmationView` / `CollectionConfirmationView` | 破棄・撮り直し確認ダイアログ | `OneClip/NativeCaptureInterface.swift`, `OneClip/CollectionPanel.swift` | 使用中 |
 
@@ -47,3 +47,12 @@
 - 状態：通常 ／ 保存中 ／ 保存失敗（再試行・保存せず続行）。
 - 狙い：作業を邪魔せず、撮った画像サムネイルを主役に見せる。
 - アート方針との対応：「4. 形の言語（`.continuous` 角丸、高コントラスト境界線）」。
+
+### 今回の情報整理での流用
+
+- 新しい表示パーツと色・余白・フォントのトークンは追加しない。`OneClipHeading`、`OneClipBadge`、標準カード、`CaptureUsageDiagram`、`DisclosureGroup`、既存のボタンを使う。
+- `OneClipOnboardingView`：用途選択→架空素材→結果→実際の入口を既存の保存設定へ接続し、重複する訴求・称賛・常時の動きを削る。現在ページをアクセシブルネームでも示す。
+- `CaptureSettingsView`：モード名とキーを主役にし、設定済みの重複ラベルを削る。初回ガイドへの入口は使い方へ集約する。
+- `CaptureAnnotationEditorView`：コメント入力は新規配置・既存コメントの選択時に表示。非コメントのツールでは現在の操作説明を表示する。保存の仕組みは主ボタンのヘルプから確認する。
+- `CollectionPanelView`：素材番号は素材名に集約し、実際の状態文を残す。完成プレビューの倍率説明はヘルプとアクセシブルヒントに置く。破棄・取り直し・失効の確認は維持する。
+- `AppUpdateSettingsSection`：通常は版と確認ボタンを表示し、実際の結果・進捗・失敗は表示する。「更新について」で通信説明と開発版確認を開く。撮影・収集・注釈・保存状態の観測は継続する。
