@@ -1,204 +1,389 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
+	classes = {
+	};
 	objectVersion = 56;
 	objects = {
-		B10000000000000000000001 /* OneClipStore */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B10000000000000000000006;
-			buildPhases = (B10000000000000000000002 /* Sources */, B10000000000000000000003 /* Frameworks */, B10000000000000000000004 /* Resources */);
-			buildRules = ();
-			dependencies = ();
-			name = OneClipStore;
-			productName = OneClip;
-			productReference = B10000000000000000000005 /* OneClip.app */;
-			productType = "com.apple.product-type.application";
-		};
-		B10000000000000000000003 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		B10000000000000000000005 /* OneClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		B10000000000000000000006 = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000007 /* Debug */, B10000000000000000000008 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		B10000000000000000000007 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {
-			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-			CODE_SIGN_ENTITLEMENTS = OneClip/OneClipStore.entitlements;
-			CODE_SIGN_STYLE = Automatic;
-			ENABLE_APP_SANDBOX = YES;
-			ENABLE_HARDENED_RUNTIME = YES;
-			GENERATE_INFOPLIST_FILE = NO;
-			INFOPLIST_FILE = OneClip/InfoStore.plist;
-			PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
-			PRODUCT_NAME = OneClip;
-			MARKETING_VERSION = 1.0.1;
-			CURRENT_PROJECT_VERSION = 4;
-			SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
-		}; name = Debug; };
-		B10000000000000000000008 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {
-			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-			CODE_SIGN_ENTITLEMENTS = OneClip/OneClipStore.entitlements;
-			CODE_SIGN_STYLE = Automatic;
-			ENABLE_APP_SANDBOX = YES;
-			ENABLE_HARDENED_RUNTIME = YES;
-			GENERATE_INFOPLIST_FILE = NO;
-			INFOPLIST_FILE = OneClip/InfoStore.plist;
-			PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
-			PRODUCT_NAME = OneClip;
-			MARKETING_VERSION = 1.0.1;
-			CURRENT_PROJECT_VERSION = 4;
-			SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
-		}; name = Release; };
-		B10000000000000000000002 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (A10000000000000000000006 /* AppUpdateViews.swift in Sources */, A10000000000000000000004 /* AppUpdateController.swift in Sources */, A10000000000000000000002 /* AppUpdateModel.swift in Sources */, 900000000000000000000002 /* CaptureSecurityTrace.swift in Sources */, 900000000000000000000004 /* CaptureEnvironmentRouter.swift in Sources */, 900000000000000000000006 /* TrustedPreviewApplication.swift in Sources */, 800000000000000000000006 /* CaptureAnnotationEditor.swift in Sources */, 800000000000000000000004 /* CaptureAnnotationController.swift in Sources */, 800000000000000000000002 /* CaptureAnnotations.swift in Sources */, 700000000000000000000004 /* CaptureResultController.swift in Sources */, 700000000000000000000002 /* CaptureArchive.swift in Sources */, 600000000000000000000002 /* OneClipStyle.swift in Sources */, 500000000000000000000008 /* M3PracticeFixture.swift in Sources */, 500000000000000000000006 /* M3FailureLab.swift in Sources */, 500000000000000000000004 /* CollectionPanel.swift in Sources */, 500000000000000000000002 /* CollectionCaptureCoordinator.swift in Sources */, 40000000000000000000000C /* CaptureConsoleUserMonitor.swift in Sources */, 40000000000000000000000A /* CaptureSessionMonitor.swift in Sources */, 400000000000000000000002 /* ProductHotKey.swift in Sources */, 400000000000000000000004 /* CapturePreferences.swift in Sources */, 400000000000000000000006 /* CaptureSettings.swift in Sources */, 400000000000000000000008 /* M2FailureLab.swift in Sources */, 300000000000000000000002 /* RegionGeometry.swift in Sources */, 300000000000000000000004 /* ScreenshotService.swift in Sources */, 300000000000000000000006 /* SingleCaptureCoordinator.swift in Sources */, 300000000000000000000008 /* NativeCaptureInterface.swift in Sources */, 200000000000000000000002 /* M0ImageCore.swift in Sources */, 200000000000000000000004 /* M0ClipboardProbe.swift in Sources */, 200000000000000000000006 /* M0HotKeyProbe.swift in Sources */, 200000000000000000000008 /* M0Lab.swift in Sources */, 200000000000000000000010 /* M0RuntimeChecks.swift in Sources */, 100000000000000000000003 /* OneClipApp.swift in Sources */);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		B10000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A40000000000000000000002 /* Assets.xcassets in Resources */, A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */, A30000000000000000000005 /* LICENSE in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-		A40000000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A40000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001; };
-		A30000000000000000000004 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
-		A30000000000000000000005 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000004; };
-		A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
-		A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001; };
-		A30000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A40000000000000000000002 /* Assets.xcassets in Resources */, A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */, A30000000000000000000005 /* LICENSE in Resources */); runOnlyForDeploymentPostprocessing = 0; };
-		A20000000000000000000001 /* Sparkle */ = {isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/sparkle-project/Sparkle"; requirement = {kind = exactVersion; version = 2.10.1; }; };
-		A20000000000000000000002 /* Sparkle */ = {isa = XCSwiftPackageProductDependency; package = A20000000000000000000001; productName = Sparkle; };
-		A20000000000000000000003 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* Sparkle */; };
-		A10000000000000000000006 /* AppUpdateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* AppUpdateViews.swift */; };
-		A10000000000000000000005 /* AppUpdateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateViews.swift; sourceTree = "<group>"; };
-		A10000000000000000000004 /* AppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* AppUpdateController.swift */; };
-		A10000000000000000000003 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
-		A10000000000000000000002 /* AppUpdateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* AppUpdateModel.swift */; };
-		A10000000000000000000001 /* AppUpdateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateModel.swift; sourceTree = "<group>"; };
-		900000000000000000000006 /* TrustedPreviewApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000005 /* TrustedPreviewApplication.swift */; };
-		900000000000000000000005 /* TrustedPreviewApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedPreviewApplication.swift; sourceTree = "<group>"; };
-		900000000000000000000002 /* CaptureSecurityTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000001 /* CaptureSecurityTrace.swift */; };
-		900000000000000000000001 /* CaptureSecurityTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSecurityTrace.swift; sourceTree = "<group>"; };
-		900000000000000000000004 /* CaptureEnvironmentRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000003 /* CaptureEnvironmentRouter.swift */; };
-		900000000000000000000003 /* CaptureEnvironmentRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureEnvironmentRouter.swift; sourceTree = "<group>"; };
-		800000000000000000000006 /* CaptureAnnotationEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000005 /* CaptureAnnotationEditor.swift */; };
-		800000000000000000000005 /* CaptureAnnotationEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotationEditor.swift; sourceTree = "<group>"; };
-		800000000000000000000004 /* CaptureAnnotationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000003 /* CaptureAnnotationController.swift */; };
-		800000000000000000000003 /* CaptureAnnotationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotationController.swift; sourceTree = "<group>"; };
-		800000000000000000000002 /* CaptureAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000001 /* CaptureAnnotations.swift */; };
-		800000000000000000000001 /* CaptureAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotations.swift; sourceTree = "<group>"; };
-		700000000000000000000004 /* CaptureResultController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000003 /* CaptureResultController.swift */; };
-		700000000000000000000003 /* CaptureResultController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureResultController.swift; sourceTree = "<group>"; };
-		700000000000000000000002 /* CaptureArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000001 /* CaptureArchive.swift */; };
-		700000000000000000000001 /* CaptureArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureArchive.swift; sourceTree = "<group>"; };
-		600000000000000000000002 /* OneClipStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600000000000000000000001 /* OneClipStyle.swift */; };
-		600000000000000000000001 /* OneClipStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneClipStyle.swift; sourceTree = "<group>"; };
-        500000000000000000000008 /* M3PracticeFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000007 /* M3PracticeFixture.swift */; };
-        500000000000000000000007 /* M3PracticeFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M3PracticeFixture.swift; sourceTree = "<group>"; };
-        500000000000000000000006 /* M3FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000005 /* M3FailureLab.swift */; };
-        500000000000000000000005 /* M3FailureLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M3FailureLab.swift; sourceTree = "<group>"; };
-		500000000000000000000002 /* CollectionCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000001 /* CollectionCaptureCoordinator.swift */; };
-		500000000000000000000001 /* CollectionCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionCaptureCoordinator.swift; sourceTree = "<group>"; };
-		500000000000000000000004 /* CollectionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000003 /* CollectionPanel.swift */; };
-		500000000000000000000003 /* CollectionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionPanel.swift; sourceTree = "<group>"; };
 
-		400000000000000000000002 /* ProductHotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* ProductHotKey.swift */; };
-		400000000000000000000001 /* ProductHotKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductHotKey.swift; sourceTree = "<group>"; };
-		400000000000000000000004 /* CapturePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* CapturePreferences.swift */; };
-		400000000000000000000003 /* CapturePreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePreferences.swift; sourceTree = "<group>"; };
-		400000000000000000000006 /* CaptureSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000005 /* CaptureSettings.swift */; };
-		400000000000000000000005 /* CaptureSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSettings.swift; sourceTree = "<group>"; };
-		40000000000000000000000C /* CaptureConsoleUserMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */; };
-		40000000000000000000000B /* CaptureConsoleUserMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureConsoleUserMonitor.swift; sourceTree = "<group>"; };
-		40000000000000000000000A /* CaptureSessionMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000009 /* CaptureSessionMonitor.swift */; };
-		400000000000000000000009 /* CaptureSessionMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSessionMonitor.swift; sourceTree = "<group>"; };
-		400000000000000000000008 /* M2FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000007 /* M2FailureLab.swift */; };
-		400000000000000000000007 /* M2FailureLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2FailureLab.swift; sourceTree = "<group>"; };
-		300000000000000000000002 /* RegionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* RegionGeometry.swift */; };
-		300000000000000000000001 /* RegionGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionGeometry.swift; sourceTree = "<group>"; };
-		300000000000000000000004 /* ScreenshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000003 /* ScreenshotService.swift */; };
-		300000000000000000000003 /* ScreenshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotService.swift; sourceTree = "<group>"; };
-		300000000000000000000006 /* SingleCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000005 /* SingleCaptureCoordinator.swift */; };
-		300000000000000000000005 /* SingleCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleCaptureCoordinator.swift; sourceTree = "<group>"; };
-		300000000000000000000008 /* NativeCaptureInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000007 /* NativeCaptureInterface.swift */; };
-		300000000000000000000007 /* NativeCaptureInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCaptureInterface.swift; sourceTree = "<group>"; };
-		200000000000000000000002 /* M0ImageCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* M0ImageCore.swift */; };
-		200000000000000000000001 /* M0ImageCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0ImageCore.swift; sourceTree = "<group>"; };
-		200000000000000000000004 /* M0ClipboardProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* M0ClipboardProbe.swift */; };
-		200000000000000000000003 /* M0ClipboardProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0ClipboardProbe.swift; sourceTree = "<group>"; };
-		200000000000000000000006 /* M0HotKeyProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* M0HotKeyProbe.swift */; };
-		200000000000000000000005 /* M0HotKeyProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0HotKeyProbe.swift; sourceTree = "<group>"; };
-		200000000000000000000008 /* M0Lab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* M0Lab.swift */; };
-		200000000000000000000007 /* M0Lab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0Lab.swift; sourceTree = "<group>"; };
-		200000000000000000000010 /* M0RuntimeChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* M0RuntimeChecks.swift */; };
-		200000000000000000000009 /* M0RuntimeChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0RuntimeChecks.swift; sourceTree = "<group>"; };
+/* Begin PBXBuildFile section */
 		100000000000000000000003 /* OneClipApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* OneClipApp.swift */; };
+		200000000000000000000002 /* M0ImageCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* M0ImageCore.swift */; };
+		200000000000000000000004 /* M0ClipboardProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* M0ClipboardProbe.swift */; };
+		200000000000000000000006 /* M0HotKeyProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* M0HotKeyProbe.swift */; };
+		200000000000000000000008 /* M0Lab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* M0Lab.swift */; };
+		200000000000000000000010 /* M0RuntimeChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* M0RuntimeChecks.swift */; };
+		300000000000000000000002 /* RegionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* RegionGeometry.swift */; };
+		300000000000000000000004 /* ScreenshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000003 /* ScreenshotService.swift */; };
+		300000000000000000000006 /* SingleCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000005 /* SingleCaptureCoordinator.swift */; };
+		300000000000000000000008 /* NativeCaptureInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000007 /* NativeCaptureInterface.swift */; };
+		30875ABA30AB105700B8BDC7 /* AppUpdateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* AppUpdateViews.swift */; };
+		30875ABB30AB105700B8BDC7 /* AppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* AppUpdateController.swift */; };
+		30875ABC30AB105700B8BDC7 /* AppUpdateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* AppUpdateModel.swift */; };
+		30875ABD30AB105700B8BDC7 /* CaptureSecurityTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000001 /* CaptureSecurityTrace.swift */; };
+		30875ABE30AB105700B8BDC7 /* CaptureEnvironmentRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000003 /* CaptureEnvironmentRouter.swift */; };
+		30875ABF30AB105700B8BDC7 /* TrustedPreviewApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000005 /* TrustedPreviewApplication.swift */; };
+		30875AC030AB105700B8BDC7 /* CaptureAnnotationEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000005 /* CaptureAnnotationEditor.swift */; };
+		30875AC130AB105700B8BDC7 /* CaptureAnnotationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000003 /* CaptureAnnotationController.swift */; };
+		30875AC230AB105700B8BDC7 /* CaptureAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000001 /* CaptureAnnotations.swift */; };
+		30875AC330AB105700B8BDC7 /* CaptureResultController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000003 /* CaptureResultController.swift */; };
+		30875AC430AB105700B8BDC7 /* CaptureArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000001 /* CaptureArchive.swift */; };
+		30875AC530AB105700B8BDC7 /* OneClipStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600000000000000000000001 /* OneClipStyle.swift */; };
+		30875AC630AB105700B8BDC7 /* M3PracticeFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000007 /* M3PracticeFixture.swift */; };
+		30875AC730AB105700B8BDC7 /* M3FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000005 /* M3FailureLab.swift */; };
+		30875AC830AB105700B8BDC7 /* CollectionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000003 /* CollectionPanel.swift */; };
+		30875AC930AB105700B8BDC7 /* CollectionCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000001 /* CollectionCaptureCoordinator.swift */; };
+		30875ACA30AB105700B8BDC7 /* CaptureConsoleUserMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */; };
+		30875ACB30AB105700B8BDC7 /* CaptureSessionMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000009 /* CaptureSessionMonitor.swift */; };
+		30875ACC30AB105700B8BDC7 /* ProductHotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* ProductHotKey.swift */; };
+		30875ACD30AB105700B8BDC7 /* CapturePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* CapturePreferences.swift */; };
+		30875ACE30AB105700B8BDC7 /* CaptureSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000005 /* CaptureSettings.swift */; };
+		30875ACF30AB105700B8BDC7 /* M2FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000007 /* M2FailureLab.swift */; };
+		30875AD030AB105700B8BDC7 /* RegionGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* RegionGeometry.swift */; };
+		30875AD130AB105700B8BDC7 /* ScreenshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000003 /* ScreenshotService.swift */; };
+		30875AD230AB105700B8BDC7 /* SingleCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000005 /* SingleCaptureCoordinator.swift */; };
+		30875AD330AB105700B8BDC7 /* NativeCaptureInterface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000007 /* NativeCaptureInterface.swift */; };
+		30875AD430AB105700B8BDC7 /* M0ImageCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* M0ImageCore.swift */; };
+		30875AD530AB105700B8BDC7 /* M0ClipboardProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* M0ClipboardProbe.swift */; };
+		30875AD630AB105700B8BDC7 /* M0HotKeyProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* M0HotKeyProbe.swift */; };
+		30875AD730AB105700B8BDC7 /* M0Lab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000007 /* M0Lab.swift */; };
+		30875AD830AB105700B8BDC7 /* M0RuntimeChecks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000009 /* M0RuntimeChecks.swift */; };
+		30875AD930AB105700B8BDC7 /* OneClipApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000001 /* OneClipApp.swift */; };
+		30875ADA30AB105700B8BDC7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* Assets.xcassets */; };
+		30875ADB30AB105700B8BDC7 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */; };
+		30875ADC30AB105700B8BDC7 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000004 /* LICENSE */; };
+		400000000000000000000002 /* ProductHotKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000001 /* ProductHotKey.swift */; };
+		400000000000000000000004 /* CapturePreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000003 /* CapturePreferences.swift */; };
+		400000000000000000000006 /* CaptureSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000005 /* CaptureSettings.swift */; };
+		400000000000000000000008 /* M2FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000007 /* M2FailureLab.swift */; };
+		40000000000000000000000A /* CaptureSessionMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 400000000000000000000009 /* CaptureSessionMonitor.swift */; };
+		40000000000000000000000C /* CaptureConsoleUserMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */; };
+		500000000000000000000002 /* CollectionCaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000001 /* CollectionCaptureCoordinator.swift */; };
+		500000000000000000000004 /* CollectionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000003 /* CollectionPanel.swift */; };
+		500000000000000000000006 /* M3FailureLab.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000005 /* M3FailureLab.swift */; };
+		500000000000000000000008 /* M3PracticeFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 500000000000000000000007 /* M3PracticeFixture.swift */; };
+		600000000000000000000002 /* OneClipStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 600000000000000000000001 /* OneClipStyle.swift */; };
+		700000000000000000000002 /* CaptureArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000001 /* CaptureArchive.swift */; };
+		700000000000000000000004 /* CaptureResultController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 700000000000000000000003 /* CaptureResultController.swift */; };
+		800000000000000000000002 /* CaptureAnnotations.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000001 /* CaptureAnnotations.swift */; };
+		800000000000000000000004 /* CaptureAnnotationController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000003 /* CaptureAnnotationController.swift */; };
+		800000000000000000000006 /* CaptureAnnotationEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 800000000000000000000005 /* CaptureAnnotationEditor.swift */; };
+		900000000000000000000002 /* CaptureSecurityTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000001 /* CaptureSecurityTrace.swift */; };
+		900000000000000000000004 /* CaptureEnvironmentRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000003 /* CaptureEnvironmentRouter.swift */; };
+		900000000000000000000006 /* TrustedPreviewApplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 900000000000000000000005 /* TrustedPreviewApplication.swift */; };
+		A10000000000000000000002 /* AppUpdateModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000001 /* AppUpdateModel.swift */; };
+		A10000000000000000000004 /* AppUpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000003 /* AppUpdateController.swift */; };
+		A10000000000000000000006 /* AppUpdateViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000005 /* AppUpdateViews.swift */; };
+		A20000000000000000000003 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = A20000000000000000000002 /* Sparkle */; };
+		A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */; };
+		A30000000000000000000005 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = A30000000000000000000004 /* LICENSE */; };
+		A40000000000000000000002 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* Assets.xcassets */; };
+		B1000000000000000000000A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* PrivacyInfo.xcprivacy */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
 		100000000000000000000001 /* OneClipApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneClipApp.swift; sourceTree = "<group>"; };
 		100000000000000000000002 /* OneClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000017 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000018 /* OneClip.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OneClip.entitlements; sourceTree = "<group>"; };
+		200000000000000000000001 /* M0ImageCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0ImageCore.swift; sourceTree = "<group>"; };
+		200000000000000000000003 /* M0ClipboardProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0ClipboardProbe.swift; sourceTree = "<group>"; };
+		200000000000000000000005 /* M0HotKeyProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0HotKeyProbe.swift; sourceTree = "<group>"; };
+		200000000000000000000007 /* M0Lab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0Lab.swift; sourceTree = "<group>"; };
+		200000000000000000000009 /* M0RuntimeChecks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M0RuntimeChecks.swift; sourceTree = "<group>"; };
+		300000000000000000000001 /* RegionGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RegionGeometry.swift; sourceTree = "<group>"; };
+		300000000000000000000003 /* ScreenshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotService.swift; sourceTree = "<group>"; };
+		300000000000000000000005 /* SingleCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SingleCaptureCoordinator.swift; sourceTree = "<group>"; };
+		300000000000000000000007 /* NativeCaptureInterface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCaptureInterface.swift; sourceTree = "<group>"; };
+		400000000000000000000001 /* ProductHotKey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductHotKey.swift; sourceTree = "<group>"; };
+		400000000000000000000003 /* CapturePreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CapturePreferences.swift; sourceTree = "<group>"; };
+		400000000000000000000005 /* CaptureSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSettings.swift; sourceTree = "<group>"; };
+		400000000000000000000007 /* M2FailureLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M2FailureLab.swift; sourceTree = "<group>"; };
+		400000000000000000000009 /* CaptureSessionMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSessionMonitor.swift; sourceTree = "<group>"; };
+		40000000000000000000000B /* CaptureConsoleUserMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureConsoleUserMonitor.swift; sourceTree = "<group>"; };
+		500000000000000000000001 /* CollectionCaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionCaptureCoordinator.swift; sourceTree = "<group>"; };
+		500000000000000000000003 /* CollectionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CollectionPanel.swift; sourceTree = "<group>"; };
+		500000000000000000000005 /* M3FailureLab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M3FailureLab.swift; sourceTree = "<group>"; };
+		500000000000000000000007 /* M3PracticeFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = M3PracticeFixture.swift; sourceTree = "<group>"; };
+		600000000000000000000001 /* OneClipStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneClipStyle.swift; sourceTree = "<group>"; };
+		700000000000000000000001 /* CaptureArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureArchive.swift; sourceTree = "<group>"; };
+		700000000000000000000003 /* CaptureResultController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureResultController.swift; sourceTree = "<group>"; };
+		800000000000000000000001 /* CaptureAnnotations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotations.swift; sourceTree = "<group>"; };
+		800000000000000000000003 /* CaptureAnnotationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotationController.swift; sourceTree = "<group>"; };
+		800000000000000000000005 /* CaptureAnnotationEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAnnotationEditor.swift; sourceTree = "<group>"; };
+		900000000000000000000001 /* CaptureSecurityTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureSecurityTrace.swift; sourceTree = "<group>"; };
+		900000000000000000000003 /* CaptureEnvironmentRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureEnvironmentRouter.swift; sourceTree = "<group>"; };
+		900000000000000000000005 /* TrustedPreviewApplication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustedPreviewApplication.swift; sourceTree = "<group>"; };
+		A10000000000000000000001 /* AppUpdateModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateModel.swift; sourceTree = "<group>"; };
+		A10000000000000000000003 /* AppUpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateController.swift; sourceTree = "<group>"; };
+		A10000000000000000000005 /* AppUpdateViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppUpdateViews.swift; sourceTree = "<group>"; };
+		A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = text; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
+		A30000000000000000000004 /* LICENSE */ = {isa = PBXFileReference; lastKnownFileType = text; path = LICENSE; sourceTree = "<group>"; };
+		A40000000000000000000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B10000000000000000000005 /* OneClip.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneClip.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B10000000000000000000009 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		100000000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A20000000000000000000003 /* Sparkle in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000000000000000000003 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
 		100000000000000000000004 = {
 			isa = PBXGroup;
-			children = (A30000000000000000000004 /* LICENSE */, A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */, 100000000000000000000005 /* OneClip */, 100000000000000000000006 /* Products */);
+			children = (
+				A30000000000000000000004 /* LICENSE */,
+				A30000000000000000000001 /* THIRD_PARTY_NOTICES.md */,
+				100000000000000000000005 /* OneClip */,
+				100000000000000000000006 /* Products */,
+			);
 			sourceTree = "<group>";
 		};
 		100000000000000000000005 /* OneClip */ = {
 			isa = PBXGroup;
-			children = (A40000000000000000000001 /* Assets.xcassets */, A10000000000000000000005 /* AppUpdateViews.swift */, A10000000000000000000003 /* AppUpdateController.swift */, A10000000000000000000001 /* AppUpdateModel.swift */, 900000000000000000000001 /* CaptureSecurityTrace.swift */, 900000000000000000000003 /* CaptureEnvironmentRouter.swift */, 900000000000000000000005 /* TrustedPreviewApplication.swift */, 800000000000000000000005 /* CaptureAnnotationEditor.swift */, 800000000000000000000003 /* CaptureAnnotationController.swift */, 800000000000000000000001 /* CaptureAnnotations.swift */, 700000000000000000000003 /* CaptureResultController.swift */, 700000000000000000000001 /* CaptureArchive.swift */, 600000000000000000000001 /* OneClipStyle.swift */, 500000000000000000000007 /* M3PracticeFixture.swift */, 500000000000000000000005 /* M3FailureLab.swift */, 500000000000000000000003 /* CollectionPanel.swift */, 500000000000000000000001 /* CollectionCaptureCoordinator.swift */, 40000000000000000000000B /* CaptureConsoleUserMonitor.swift */, 400000000000000000000009 /* CaptureSessionMonitor.swift */, 400000000000000000000001 /* ProductHotKey.swift */, 400000000000000000000003 /* CapturePreferences.swift */, 400000000000000000000005 /* CaptureSettings.swift */, 400000000000000000000007 /* M2FailureLab.swift */, 300000000000000000000001 /* RegionGeometry.swift */, 300000000000000000000003 /* ScreenshotService.swift */, 300000000000000000000005 /* SingleCaptureCoordinator.swift */, 300000000000000000000007 /* NativeCaptureInterface.swift */, 200000000000000000000001 /* M0ImageCore.swift */, 200000000000000000000003 /* M0ClipboardProbe.swift */, 200000000000000000000005 /* M0HotKeyProbe.swift */, 200000000000000000000007 /* M0Lab.swift */, 200000000000000000000009 /* M0RuntimeChecks.swift */, 100000000000000000000001 /* OneClipApp.swift */, 100000000000000000000017 /* Info.plist */, 100000000000000000000018 /* OneClip.entitlements */);
+			children = (
+				A40000000000000000000001 /* Assets.xcassets */,
+				B10000000000000000000009 /* PrivacyInfo.xcprivacy */,
+				A10000000000000000000005 /* AppUpdateViews.swift */,
+				A10000000000000000000003 /* AppUpdateController.swift */,
+				A10000000000000000000001 /* AppUpdateModel.swift */,
+				900000000000000000000001 /* CaptureSecurityTrace.swift */,
+				900000000000000000000003 /* CaptureEnvironmentRouter.swift */,
+				900000000000000000000005 /* TrustedPreviewApplication.swift */,
+				800000000000000000000005 /* CaptureAnnotationEditor.swift */,
+				800000000000000000000003 /* CaptureAnnotationController.swift */,
+				800000000000000000000001 /* CaptureAnnotations.swift */,
+				700000000000000000000003 /* CaptureResultController.swift */,
+				700000000000000000000001 /* CaptureArchive.swift */,
+				600000000000000000000001 /* OneClipStyle.swift */,
+				500000000000000000000007 /* M3PracticeFixture.swift */,
+				500000000000000000000005 /* M3FailureLab.swift */,
+				500000000000000000000003 /* CollectionPanel.swift */,
+				500000000000000000000001 /* CollectionCaptureCoordinator.swift */,
+				40000000000000000000000B /* CaptureConsoleUserMonitor.swift */,
+				400000000000000000000009 /* CaptureSessionMonitor.swift */,
+				400000000000000000000001 /* ProductHotKey.swift */,
+				400000000000000000000003 /* CapturePreferences.swift */,
+				400000000000000000000005 /* CaptureSettings.swift */,
+				400000000000000000000007 /* M2FailureLab.swift */,
+				300000000000000000000001 /* RegionGeometry.swift */,
+				300000000000000000000003 /* ScreenshotService.swift */,
+				300000000000000000000005 /* SingleCaptureCoordinator.swift */,
+				300000000000000000000007 /* NativeCaptureInterface.swift */,
+				200000000000000000000001 /* M0ImageCore.swift */,
+				200000000000000000000003 /* M0ClipboardProbe.swift */,
+				200000000000000000000005 /* M0HotKeyProbe.swift */,
+				200000000000000000000007 /* M0Lab.swift */,
+				200000000000000000000009 /* M0RuntimeChecks.swift */,
+				100000000000000000000001 /* OneClipApp.swift */,
+				100000000000000000000017 /* Info.plist */,
+				100000000000000000000018 /* OneClip.entitlements */,
+			);
 			path = OneClip;
 			sourceTree = "<group>";
 		};
 		100000000000000000000006 /* Products */ = {
 			isa = PBXGroup;
-			children = (100000000000000000000002 /* OneClip.app */, B10000000000000000000005 /* OneClip.app */);
+			children = (
+				100000000000000000000002 /* OneClip.app */,
+				B10000000000000000000005 /* OneClip.app */,
+			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
 		100000000000000000000007 /* OneClip */ = {
 			isa = PBXNativeTarget;
-			packageProductDependencies = (A20000000000000000000002 /* Sparkle */);
-			buildConfigurationList = 100000000000000000000012;
-			buildPhases = (100000000000000000000008 /* Sources */, 100000000000000000000009 /* Frameworks */, A30000000000000000000003 /* Resources */);
-			buildRules = ();
-			dependencies = ();
+			buildConfigurationList = 100000000000000000000012 /* Build configuration list for PBXNativeTarget "OneClip" */;
+			buildPhases = (
+				100000000000000000000008 /* Sources */,
+				100000000000000000000009 /* Frameworks */,
+				A30000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = OneClip;
+			packageProductDependencies = (
+				A20000000000000000000002 /* Sparkle */,
+			);
 			productName = OneClip;
 			productReference = 100000000000000000000002 /* OneClip.app */;
 			productType = "com.apple.product-type.application";
 		};
-		100000000000000000000008 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (A10000000000000000000006 /* AppUpdateViews.swift in Sources */, A10000000000000000000004 /* AppUpdateController.swift in Sources */, A10000000000000000000002 /* AppUpdateModel.swift in Sources */, 900000000000000000000002 /* CaptureSecurityTrace.swift in Sources */, 900000000000000000000004 /* CaptureEnvironmentRouter.swift in Sources */, 900000000000000000000006 /* TrustedPreviewApplication.swift in Sources */, 800000000000000000000006 /* CaptureAnnotationEditor.swift in Sources */, 800000000000000000000004 /* CaptureAnnotationController.swift in Sources */, 800000000000000000000002 /* CaptureAnnotations.swift in Sources */, 700000000000000000000004 /* CaptureResultController.swift in Sources */, 700000000000000000000002 /* CaptureArchive.swift in Sources */, 600000000000000000000002 /* OneClipStyle.swift in Sources */, 500000000000000000000008 /* M3PracticeFixture.swift in Sources */, 500000000000000000000006 /* M3FailureLab.swift in Sources */, 500000000000000000000004 /* CollectionPanel.swift in Sources */, 500000000000000000000002 /* CollectionCaptureCoordinator.swift in Sources */, 40000000000000000000000C /* CaptureConsoleUserMonitor.swift in Sources */, 40000000000000000000000A /* CaptureSessionMonitor.swift in Sources */, 400000000000000000000002 /* ProductHotKey.swift in Sources */, 400000000000000000000004 /* CapturePreferences.swift in Sources */, 400000000000000000000006 /* CaptureSettings.swift in Sources */, 400000000000000000000008 /* M2FailureLab.swift in Sources */, 300000000000000000000002 /* RegionGeometry.swift in Sources */, 300000000000000000000004 /* ScreenshotService.swift in Sources */, 300000000000000000000006 /* SingleCaptureCoordinator.swift in Sources */, 300000000000000000000008 /* NativeCaptureInterface.swift in Sources */, 200000000000000000000002 /* M0ImageCore.swift in Sources */, 200000000000000000000004 /* M0ClipboardProbe.swift in Sources */, 200000000000000000000006 /* M0HotKeyProbe.swift in Sources */, 200000000000000000000008 /* M0Lab.swift in Sources */, 200000000000000000000010 /* M0RuntimeChecks.swift in Sources */, 100000000000000000000003 /* OneClipApp.swift in Sources */);
-			runOnlyForDeploymentPostprocessing = 0;
+		B10000000000000000000001 /* OneClipStore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B10000000000000000000006 /* Build configuration list for PBXNativeTarget "OneClipStore" */;
+			buildPhases = (
+				B10000000000000000000002 /* Sources */,
+				B10000000000000000000003 /* Frameworks */,
+				B10000000000000000000004 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = OneClipStore;
+			productName = OneClip;
+			productReference = B10000000000000000000005 /* OneClip.app */;
+			productType = "com.apple.product-type.application";
 		};
-		100000000000000000000009 /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (A20000000000000000000003 /* Sparkle in Frameworks */);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
 		100000000000000000000010 /* Project object */ = {
 			isa = PBXProject;
-			packageReferences = (A20000000000000000000001 /* Sparkle */);
-			attributes = {BuildIndependentTargetsInParallel = YES; LastSwiftUpdateCheck = 2700; LastUpgradeCheck = 2700; };
-			buildConfigurationList = 100000000000000000000011;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+			};
+			buildConfigurationList = 100000000000000000000011 /* Build configuration list for PBXProject "OneClip" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = ja;
 			hasScannedForEncodings = 0;
-			knownRegions = (ja, en, Base);
+			knownRegions = (
+				ja,
+				en,
+				Base,
+			);
 			mainGroup = 100000000000000000000004;
+			packageReferences = (
+				A20000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			productRefGroup = 100000000000000000000006 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (100000000000000000000007 /* OneClip */, B10000000000000000000001 /* OneClipStore */);
+			targets = (
+				100000000000000000000007 /* OneClip */,
+				B10000000000000000000001 /* OneClipStore */,
+			);
 		};
-		100000000000000000000011 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (100000000000000000000013 /* Debug */, 100000000000000000000014 /* Release */);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A30000000000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A40000000000000000000002 /* Assets.xcassets in Resources */,
+				A30000000000000000000002 /* THIRD_PARTY_NOTICES.md in Resources */,
+				A30000000000000000000005 /* LICENSE in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
-		100000000000000000000012 = {
-			isa = XCConfigurationList;
-			buildConfigurations = (100000000000000000000015 /* Debug */, 100000000000000000000016 /* Release */);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
+		B10000000000000000000004 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				30875ADA30AB105700B8BDC7 /* Assets.xcassets in Resources */,
+				30875ADB30AB105700B8BDC7 /* THIRD_PARTY_NOTICES.md in Resources */,
+				30875ADC30AB105700B8BDC7 /* LICENSE in Resources */,
+				B1000000000000000000000A /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
 		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		100000000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000006 /* AppUpdateViews.swift in Sources */,
+				A10000000000000000000004 /* AppUpdateController.swift in Sources */,
+				A10000000000000000000002 /* AppUpdateModel.swift in Sources */,
+				900000000000000000000002 /* CaptureSecurityTrace.swift in Sources */,
+				900000000000000000000004 /* CaptureEnvironmentRouter.swift in Sources */,
+				900000000000000000000006 /* TrustedPreviewApplication.swift in Sources */,
+				800000000000000000000006 /* CaptureAnnotationEditor.swift in Sources */,
+				800000000000000000000004 /* CaptureAnnotationController.swift in Sources */,
+				800000000000000000000002 /* CaptureAnnotations.swift in Sources */,
+				700000000000000000000004 /* CaptureResultController.swift in Sources */,
+				700000000000000000000002 /* CaptureArchive.swift in Sources */,
+				600000000000000000000002 /* OneClipStyle.swift in Sources */,
+				500000000000000000000008 /* M3PracticeFixture.swift in Sources */,
+				500000000000000000000006 /* M3FailureLab.swift in Sources */,
+				500000000000000000000004 /* CollectionPanel.swift in Sources */,
+				500000000000000000000002 /* CollectionCaptureCoordinator.swift in Sources */,
+				40000000000000000000000C /* CaptureConsoleUserMonitor.swift in Sources */,
+				40000000000000000000000A /* CaptureSessionMonitor.swift in Sources */,
+				400000000000000000000002 /* ProductHotKey.swift in Sources */,
+				400000000000000000000004 /* CapturePreferences.swift in Sources */,
+				400000000000000000000006 /* CaptureSettings.swift in Sources */,
+				400000000000000000000008 /* M2FailureLab.swift in Sources */,
+				300000000000000000000002 /* RegionGeometry.swift in Sources */,
+				300000000000000000000004 /* ScreenshotService.swift in Sources */,
+				300000000000000000000006 /* SingleCaptureCoordinator.swift in Sources */,
+				300000000000000000000008 /* NativeCaptureInterface.swift in Sources */,
+				200000000000000000000002 /* M0ImageCore.swift in Sources */,
+				200000000000000000000004 /* M0ClipboardProbe.swift in Sources */,
+				200000000000000000000006 /* M0HotKeyProbe.swift in Sources */,
+				200000000000000000000008 /* M0Lab.swift in Sources */,
+				200000000000000000000010 /* M0RuntimeChecks.swift in Sources */,
+				100000000000000000000003 /* OneClipApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B10000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				30875ABA30AB105700B8BDC7 /* AppUpdateViews.swift in Sources */,
+				30875ABB30AB105700B8BDC7 /* AppUpdateController.swift in Sources */,
+				30875ABC30AB105700B8BDC7 /* AppUpdateModel.swift in Sources */,
+				30875ABD30AB105700B8BDC7 /* CaptureSecurityTrace.swift in Sources */,
+				30875ABE30AB105700B8BDC7 /* CaptureEnvironmentRouter.swift in Sources */,
+				30875ABF30AB105700B8BDC7 /* TrustedPreviewApplication.swift in Sources */,
+				30875AC030AB105700B8BDC7 /* CaptureAnnotationEditor.swift in Sources */,
+				30875AC130AB105700B8BDC7 /* CaptureAnnotationController.swift in Sources */,
+				30875AC230AB105700B8BDC7 /* CaptureAnnotations.swift in Sources */,
+				30875AC330AB105700B8BDC7 /* CaptureResultController.swift in Sources */,
+				30875AC430AB105700B8BDC7 /* CaptureArchive.swift in Sources */,
+				30875AC530AB105700B8BDC7 /* OneClipStyle.swift in Sources */,
+				30875AC630AB105700B8BDC7 /* M3PracticeFixture.swift in Sources */,
+				30875AC730AB105700B8BDC7 /* M3FailureLab.swift in Sources */,
+				30875AC830AB105700B8BDC7 /* CollectionPanel.swift in Sources */,
+				30875AC930AB105700B8BDC7 /* CollectionCaptureCoordinator.swift in Sources */,
+				30875ACA30AB105700B8BDC7 /* CaptureConsoleUserMonitor.swift in Sources */,
+				30875ACB30AB105700B8BDC7 /* CaptureSessionMonitor.swift in Sources */,
+				30875ACC30AB105700B8BDC7 /* ProductHotKey.swift in Sources */,
+				30875ACD30AB105700B8BDC7 /* CapturePreferences.swift in Sources */,
+				30875ACE30AB105700B8BDC7 /* CaptureSettings.swift in Sources */,
+				30875ACF30AB105700B8BDC7 /* M2FailureLab.swift in Sources */,
+				30875AD030AB105700B8BDC7 /* RegionGeometry.swift in Sources */,
+				30875AD130AB105700B8BDC7 /* ScreenshotService.swift in Sources */,
+				30875AD230AB105700B8BDC7 /* SingleCaptureCoordinator.swift in Sources */,
+				30875AD330AB105700B8BDC7 /* NativeCaptureInterface.swift in Sources */,
+				30875AD430AB105700B8BDC7 /* M0ImageCore.swift in Sources */,
+				30875AD530AB105700B8BDC7 /* M0ClipboardProbe.swift in Sources */,
+				30875AD630AB105700B8BDC7 /* M0HotKeyProbe.swift in Sources */,
+				30875AD730AB105700B8BDC7 /* M0Lab.swift in Sources */,
+				30875AD830AB105700B8BDC7 /* M0RuntimeChecks.swift in Sources */,
+				30875AD930AB105700B8BDC7 /* OneClipApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
 		100000000000000000000013 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -234,42 +419,136 @@
 				CODE_SIGN_ENTITLEMENTS = OneClip/OneClipDebug.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 4;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OneClip/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.1;
+				ONECLIP_UPDATE_CHANNEL = stable;
 				PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				MARKETING_VERSION = 1.0.1;
-				CURRENT_PROJECT_VERSION = 4;
-				ONECLIP_UPDATE_CHANNEL = stable;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 			};
 			name = Debug;
 		};
 		100000000000000000000016 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				DEPLOYMENT_POSTPROCESSING = YES;
-				STRIP_INSTALLED_PRODUCT = YES;
-				STRIP_STYLE = debugging;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = OneClip/OneClip.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
+				CURRENT_PROJECT_VERSION = 4;
+				DEPLOYMENT_POSTPROCESSING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = OneClip/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.1;
+				ONECLIP_UPDATE_CHANNEL = stable;
 				PRODUCT_BUNDLE_IDENTIFIER = local.OneClip;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				MARKETING_VERSION = 1.0.1;
-				CURRENT_PROJECT_VERSION = 4;
-				ONECLIP_UPDATE_CHANNEL = stable;
-				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = debugging;
 			};
 			name = Release;
 		};
+		B10000000000000000000007 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = OneClip/OneClipStore.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = MY4L8GVM2L;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OneClip/InfoStore.plist;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taigashinohara.oneclipmac;
+				PRODUCT_NAME = OneClip;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
+			};
+			name = Debug;
+		};
+		B10000000000000000000008 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = OneClip/OneClipStore.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 4;
+				DEVELOPMENT_TEAM = MY4L8GVM2L;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = OneClip/InfoStore.plist;
+				MARKETING_VERSION = 1.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taigashinohara.oneclipmac;
+				PRODUCT_NAME = OneClip;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) APP_STORE";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		100000000000000000000011 /* Build configuration list for PBXProject "OneClip" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000013 /* Debug */,
+				100000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		100000000000000000000012 /* Build configuration list for PBXNativeTarget "OneClip" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				100000000000000000000015 /* Debug */,
+				100000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B10000000000000000000006 /* Build configuration list for PBXNativeTarget "OneClipStore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B10000000000000000000007 /* Debug */,
+				B10000000000000000000008 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A20000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = exactVersion;
+				version = 2.10.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A20000000000000000000002 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A20000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 100000000000000000000010 /* Project object */;
 }

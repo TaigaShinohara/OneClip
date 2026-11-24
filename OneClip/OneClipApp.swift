@@ -37,25 +37,15 @@ struct OneClipApp: App {
     @StateObject private var updates = AppUpdateController.shared
     var body: some Scene {
         MenuBarExtra {
-            Text("OneClip — 必要なところを、ひと貼り")
             #if DEBUG
             if M2FailureLab.isEnabled || M3FailureLab.isEnabled { Text("安全な試験モード・一般コピーなし") }
             #endif
-            Text(capture.statusText)
+            if capture.hasStatusNotice { Text(capture.statusText) }
             if result.hasPendingSave {
                 Text(result.message)
                 Button(result.isSaving ? "画像を保存中…" : "画像の保存を再試行") { result.retrySave() }.disabled(result.isSaving)
                 Button("保存せずに続ける") { result.discardUnsaved() }.disabled(result.isSaving)
             }
-            Button("最新の画像にコメント・記号を追加…") { result.annotateLatest() }
-                .disabled(result.latestURL == nil || result.isSaving || result.hasPendingSave)
-            if annotation.isOpen {
-                Button("コメント・記号の編集画面を表示…") { annotation.show() }
-            }
-            Button("保存した画像を標準プレビューで編集…") { result.editLatest() }
-                .disabled(result.latestURL == nil || annotation.blocksCapture)
-            Button("保存フォルダを開く") { result.openFolder() }
-            Divider()
             Button { OneClipModeActions.single() } label: {
                 Label("範囲をコピー", systemImage: "viewfinder")
             }
@@ -93,8 +83,17 @@ struct OneClipApp: App {
                     .disabled(capture.problem == nil)
             }
             Divider()
-            Text("まとめ撮りキー: \(keys.hasPendingCleanup ? "停止中・登録解除が必要" : keys.activeCollectionChord?.displayName ?? "未登録")")
-            Text("撮影キー: \(keys.hasPendingCleanup ? "停止中・登録解除が必要" : keys.activeChord?.displayName ?? "未登録")")
+            Button("最新の画像にコメント・記号を追加…") { result.annotateLatest() }
+                .disabled(result.latestURL == nil || result.isSaving || result.hasPendingSave)
+            if annotation.isOpen {
+                Button("コメント・記号の編集画面を表示…") { annotation.show() }
+            }
+            Menu("画像と保存先") {
+                Button("標準プレビューで編集…") { result.editLatest() }
+                    .disabled(result.latestURL == nil || annotation.blocksCapture)
+                Button("保存フォルダを開く") { result.openFolder() }
+            }
+            Divider()
             Button { CaptureSettingsController.shared.show() } label: {
                 Label("設定…", systemImage: "slider.horizontal.3")
             }

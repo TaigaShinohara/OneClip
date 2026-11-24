@@ -401,6 +401,7 @@ struct SingleCaptureCoordinatorTests {
     @MainActor
     static func testNormal() async throws {
         let h = try Harness()
+        try expect(!h.coordinator.hasStatusNotice, "Initial idle instructions should not occupy the menu")
         try h.beginAndSelect()
         await h.coordinator.waitForWorker()
         try expect(h.clipboard.calls == 1 && h.clipboard.successfulWrites == 1, "Normal path must write exactly once")
@@ -409,6 +410,7 @@ struct SingleCaptureCoordinatorTests {
                    "Successful operation kept retained image or worker")
         try expect(h.coordinator.problem == nil && h.interface.feedback.count == 1 && h.interface.returnCalls == 1,
                    "Success feedback/focus mismatch")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the copy result")
         h.coordinator.retryCopy()
         await Task.yield()
         try expect(h.clipboard.calls == 1, "Released image remained available for another write")
@@ -657,6 +659,7 @@ struct SingleCaptureCoordinatorTests {
         selected(h.selection)
         await Task.yield()
         try expect(h.coordinator.phase == .idle && h.coordinator.canBegin, "Esc did not return to idle")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the cancellation notice")
         try expect(h.capturer.calls == 0 && h.clipboard.calls == 0 && h.interface.feedback.isEmpty,
                    "Esc/stale callback captured or wrote")
     }
@@ -877,6 +880,7 @@ struct SingleCaptureCoordinatorTests {
         try expect(h.clipboard.calls == 0 && !h.coordinator.hasRetainedImage && h.interface.feedback.isEmpty,
                    "Protected-data revocation allowed a late write")
         try expect(h.coordinator.phase == .idle && !h.coordinator.isWorking, "Revocation stranded worker state")
+        try expect(h.coordinator.hasStatusNotice, "Returning to idle hid the invalidation notice")
     }
 
     @MainActor
@@ -1037,6 +1041,56 @@ struct SingleCaptureCoordinatorTests {
         let welcomeDomain = defaults.persistentDomain(forName: suiteName) ?? [:]
         try expect(welcomeDomain.count == 1 && welcomeDomain["OneClip.hasSeenWelcome"] as? Bool == true,
                    "Explicit welcome acknowledgement persisted unexpected preference keys")
+
+        // Compact onboarding, window-dot math and persisted state
+        defaults.removePersistentDomain(forName: suiteName)
+        let onboardingStore = CapturePreferences(defaults: defaults)
+        try expect(onboardingStore.shouldPresentOnboardingOnLaunch && !onboardingStore.preferredInitialCollectionMode,
+                   "Fresh preferences did not request onboarding on launch")
+        onboardingStore.recordOnboardingCompletion(concern: .multi, trialSample: .settingsValue)
+        let restoredOnboarding = CapturePreferences(defaults: defaults)
+        try expect(!restoredOnboarding.shouldPresentOnboardingOnLaunch
+                   && restoredOnboarding.hasSeenWelcome
+                   && restoredOnboarding.completedOnboardingVersion == CapturePreferences.currentOnboardingVersion
+                   && restoredOnboarding.selectedOnboardingConcern == .multi
+                   && restoredOnboarding.completedOnboardingTrial == .settingsValue
+                   && restoredOnboarding.preferredInitialCollectionMode,
+                   "Onboarding completion state was not persisted and restored")
+        for concern in OnboardingConcern.allCases {
+            let specs = OnboardingPageCatalog.pages(for: concern, trialSample: .issueArea)
+            try expect(specs.count == OnboardingPageCatalog.totalPageCount && specs.count == 5,
+                       "The compact guide must retain its five distinct steps")
+            try expect(specs.map(\.role) == [.identity, .selection, .interaction, .match, .connection],
+                       "Guide order skipped mode discovery, practice or the actual entry point")
+            try expect(specs.map(\.index) == Array(0..<specs.count),
+                       "Guide progress no longer matches persisted page events")
+            for spec in specs {
+                try expect(!spec.headline.isEmpty && spec.headline.count <= 22,
+                           "Headline exceeded single-claim length budget on page \(spec.pageNumber)")
+                try expect(spec.subtitle.count <= 60 && !spec.heroDescription.isEmpty,
+                           "Page \(spec.pageNumber) missed subtitle limit or accessible description")
+                try expect(!spec.headline.contains("必ず") && !spec.headline.contains("絶対に") && !spec.headline.contains("誰でも")
+                           && !spec.subtitle.contains("必ず") && !spec.subtitle.contains("絶対に") && !spec.subtitle.contains("誰でも"),
+                           "Page \(spec.pageNumber) contained forbidden guarantee copy")
+                try expect(spec.requiresChoiceToAdvance == (spec.role == .selection || spec.role == .interaction),
+                           "Only selection and interaction pages may omit the Next button")
+            }
+            for sample in OnboardingTrialSample.allCases {
+                let result = OnboardingPageCatalog.pages(for: concern, trialSample: sample)[3]
+                try expect(result.heroDescription.contains(sample.title),
+                           "Practice result lost the selected sample's accessible description")
+            }
+        }
+        var previousCurrentDotPage = -1
+        for pageIndex in 0..<OnboardingPageCatalog.totalPageCount {
+            let dots = OnboardingWindowDots.compute(currentPage: pageIndex, totalPages: OnboardingPageCatalog.totalPageCount)
+            try expect(dots.count == 5, "Window dots must display at most 5 dots")
+            let currentDots = dots.filter(\.isCurrent)
+            try expect(currentDots.count == 1 && currentDots[0].pageIndex == pageIndex
+                       && currentDots[0].pageIndex == previousCurrentDotPage + 1,
+                       "Window dots did not advance by 1 on page \(pageIndex)")
+            previousCurrentDotPage = currentDots[0].pageIndex
+        }
     }
 
     @MainActor

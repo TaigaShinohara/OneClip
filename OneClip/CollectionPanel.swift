@@ -340,7 +340,6 @@ struct CollectionPanelView: View {
 
     private var statusNotice: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text("最新の結果").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             Label(coordinator.latestResultText, systemImage: "info.circle")
                 .font(.callout).lineSpacing(3).fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.updatesFrequently)
@@ -389,12 +388,6 @@ struct CollectionPanelView: View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(coordinator.items) { item in
                 HStack(alignment: .top, spacing: 10) {
-                    Text("\(item.index + 1)")
-                        .font(.system(.callout, design: .rounded).weight(.semibold))
-                        .foregroundStyle(OneClipTone.collection.color(for: colorScheme))
-                        .frame(width: 26, height: 26)
-                        .background(OneClipTone.collection.color(for: colorScheme).opacity(0.10), in: Circle())
-                        .accessibilityHidden(true)
                     CollectionSourceImage(image: item.image, securityTrace: coordinator.securityTrace)
                         .frame(width: 72, height: 58)
                         .accessibilityLabel("素材\(item.index + 1)の小画像")
@@ -456,6 +449,7 @@ struct CollectionPanelView: View {
                         Text("100%").tag(true)
                     }.pickerStyle(.segmented).labelsHidden().frame(width: 140)
                     .focused($focusedAction, equals: "zoom")
+                    .help("全体は表示だけを縮小。100%は画像1pxを画面1pxで表示します。コピーする画素数は変わりません。")
                 } else {
                     Button("大きく確認") {
                         coordinator.preparePreview()
@@ -472,11 +466,12 @@ struct CollectionPanelView: View {
                 .focusable(expanded && actualPixels)
                 .focused($focusedAction, equals: "preview")
                 .overlay {
-                    RoundedRectangle(cornerRadius: 4)
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .stroke(focusedAction == "preview" ? Color.accentColor : .clear, lineWidth: 2)
                         .allowsHitTesting(false)
                 }
                 .accessibilityLabel("撮影順の完成画像。\(plan.width)かける\(plan.height)ピクセル")
+                .help("全体は表示だけを縮小。100%は画像1pxを画面1pxで表示します。矢印で移動、Homeで先頭へ戻ります。コピーする画素数は変わりません。")
                 .accessibilityHint("100%では矢印で移動、Homeで先頭、Tabで画像から移動できます")
                 .onKeyPress(keys: CollectionPreviewNavigation.keys) { press in
                     guard let command = CollectionPreviewNavigation.command(
@@ -485,11 +480,6 @@ struct CollectionPanelView: View {
                         confirmationPending: interface.collectionConfirmationPending) else { return .ignored }
                     return previewActions.pan(command) ? .handled : .ignored
                 }
-            if expanded {
-                Text(actualPixels ? "100%：画像1pxを画面1pxで表示。Tabで画像へ、矢印で移動、Homeで先頭" : "全体：表示だけを縮小。コピーする画素数は変わりません")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
         }
         .oneClipCard(padding: 14)
     }
@@ -608,8 +598,6 @@ struct CollectionPanelView: View {
                 .disabled(!coordinator.canEndSession)
                 .focused($focusedAction, equals: "cancel")
             }
-            Text(expanded ? "コピーはボタンで実行します。Enterではコピーしません。コピー後も素材を保持します。" : "収集中はクリップボードを変更しません。コピー後も次のまとめ撮り開始まで編集できます。閉じると一時的に隠れます。")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         .fixedSize(horizontal: false, vertical: true)
     }

@@ -17,6 +17,9 @@ public struct PreferencesReader: Sendable {
         ("OneClip.hasSeenCollectionGuide", "bool"),
         ("OneClip.hasSeenPasteHint", "bool"),
         ("OneClip.hasSeenWelcome", "bool"),
+        ("OneClip.completedOnboardingVersion", "number"),
+        ("OneClip.onboardingConcern", "string"),
+        ("OneClip.onboardingTrialSample", "string"),
         ("OneClip.singleCaptureHotKey.v1", "data"),
         ("OneClip.collectionCaptureHotKey.v1", "data"),
     ]

@@ -541,6 +541,7 @@ private struct CaptureResultView: View {
     let close: () -> Void
     let retry: () -> Void
     let discard: () -> Void
+    @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
         VStack(spacing: 10) {
@@ -557,7 +558,7 @@ private struct CaptureResultView: View {
                     else { Image(systemName: "photo").font(.largeTitle) }
                 }
                 .frame(maxWidth: .infinity).frame(height: 120)
-                .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                .background(.black.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             .buttonStyle(.plain).disabled(failed || saving)
             .accessibilityLabel("撮影画像にコメント・記号を追加")
@@ -572,8 +573,8 @@ private struct CaptureResultView: View {
             }
         }
         .padding(12).frame(width: 284, height: 224)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.12)))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.primary.opacity(contrast == .increased ? 0.45 : 0.12)))
     }
 }
 

@@ -2,11 +2,12 @@ import SwiftUI
 
 struct AppUpdateSettingsSection: View {
     @ObservedObject private var updates = AppUpdateController.shared
+    // Availability is derived from these controllers; observe them even when idle text is hidden.
     @ObservedObject private var capture = SingleCaptureCoordinator.shared
     @ObservedObject private var collection = CollectionCaptureCoordinator.shared
     @ObservedObject private var results = CaptureResultController.shared
     @ObservedObject private var annotation = CaptureAnnotationController.shared
-    @State private var showsDevelopment = false
+    @State private var showsDetails = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -18,30 +19,27 @@ struct AppUpdateSettingsSection: View {
                 .disabled(!updates.canCheckForUpdates)
             if let reason = updates.checkBlockReason {
                 Text(reason).font(.callout).foregroundStyle(.secondary)
+            } else if updates.statusText != AppUpdateSessionState.initialStatusText {
+                Text(updates.statusText)
+                    .font(.callout).fixedSize(horizontal: false, vertical: true)
             }
-            Text(updates.statusText)
-                .font(.callout).fixedSize(horizontal: false, vertical: true)
             if updates.hasPostponedInstallation {
                 Button("更新して再起動") { updates.resumeInstallationIfReady() }
                     .disabled(!updates.canResumeInstallation)
             }
-            Text("ボタンを押したときだけ更新を確認します。保存した画像やクリップボードの内容は送信しません。")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            DisclosureGroup("開発用", isExpanded: $showsDevelopment) {
+            DisclosureGroup("更新について", isExpanded: $showsDetails) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("開発中の版も更新候補に含めます。通常の更新確認は公開版のみです。")
-                        .font(.callout).fixedSize(horizontal: false, vertical: true)
+                    Text("ボタンを押したときだけ更新を確認します。保存した画像やクリップボードの内容は送信しません。")
+                    Divider()
+                    Text("開発版を含めて確認できます。古い公開版へは自動で戻しません。")
                     Button("開発版を確認…") { updates.checkForUpdates(channel: .development) }
                         .disabled(!updates.canCheckForUpdates)
-                    Text("開発版より古い公開版への自動切り替えは行いません。新しい公開版が出たときに通常の更新を利用できます。")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }.padding(.top, 8)
+                }
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 8)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .oneClipCard()
     }
 }

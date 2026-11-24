@@ -152,12 +152,13 @@ private struct CaptureSettingsView: View {
     @State private var recording = false
     @State private var inputMessage = ""
     @State private var showsHelp = false
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         ScrollViewReader { scroll in
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    header.padding(.bottom, 24)
+                    header.padding(.bottom, 20)
                     if keys.hasPendingCleanup {
                         VStack(alignment: .leading, spacing: 10) {
                             Label("両方の撮影キーを停止しています", systemImage: "exclamationmark.triangle")
@@ -176,7 +177,7 @@ private struct CaptureSettingsView: View {
                             }
                         }
                         .padding(16).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+                        .background(OneClipTone.warning.color(for: scheme).opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                         .padding(.bottom, 16)
                     }
                     VStack(spacing: 16) {
@@ -185,14 +186,17 @@ private struct CaptureSettingsView: View {
                         }
                     }
                     .padding(.bottom, 22)
-                    Label(keys.settingsInteractionBlocked ? "キーの設定を確定するか取り消すと撮影できます。" : keys.hasPendingCleanup ? "メニューから撮影できます。" : "設定を開いたまま撮影できます。", systemImage: "info.circle")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
-                        .padding(.bottom, 16)
-                    Button("使い方…") { NativeCaptureInterface.shared.showUsageGuide() }
-                        .buttonStyle(.borderless)
-                        .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
-                        .padding(.horizontal, 4).padding(.bottom, 16)
+                    if keys.settingsInteractionBlocked {
+                        Text("キーの設定を確定するか取り消すと撮影できます。")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .padding(.horizontal, 4).padding(.bottom, 16)
+                    }
+                    HStack(spacing: 16) {
+                        Button("使い方…") { NativeCaptureInterface.shared.showUsageGuide() }
+                            .buttonStyle(.borderless)
+                    }
+                    .disabled(recording || candidate != nil || keys.settingsInteractionBlocked)
+                    .padding(.horizontal, 4).padding(.bottom, 16)
                     Text("撮影画像はこのMacに自動保存し、保存期限はありません。")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -232,20 +236,10 @@ private struct CaptureSettingsView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 7) {
-                Text("撮影キー")
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                Text("未設定でも、OneClipメニューから使えます。")
-                    .font(.callout).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-            Image(systemName: "keyboard")
-                .font(.system(size: 23, weight: .regular))
-                .foregroundStyle(.secondary)
-                .frame(width: 52, height: 52)
-                .background(Color.primary.opacity(0.04), in: Circle())
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 7) {
+            Text("撮影キー").font(.system(size: 20, weight: .semibold, design: .rounded))
+            Text("未設定でも、メニューから撮影できます。")
+                .font(.callout).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 4)
     }
@@ -255,11 +249,7 @@ private struct CaptureSettingsView: View {
             HStack(spacing: 14) {
                 OneClipBadge(systemName: keyRole == .single ? "viewfinder" : "square.stack",
                              tone: keyRole == .single ? .single : .collection)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(keyRole.title).font(.system(size: 15, weight: .semibold))
-                    Text(keyRole == .single ? "選んだ範囲をすぐコピー" : "必要な箇所を1枚にまとめる")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
+                Text(keyRole.title).font(.system(size: 15, weight: .semibold))
                 Spacer(minLength: 8)
                 Button(keys.desiredChord(for: keyRole) == nil ? "設定…" : "変更…") {
                     resetInput(for: keyRole)
@@ -276,8 +266,6 @@ private struct CaptureSettingsView: View {
                     Label("停止中", systemImage: "pause.circle").foregroundStyle(.secondary)
                 } else if let chord = keys.activeChord(for: keyRole) {
                     ShortcutKeycaps(chord: chord)
-                    Label("設定済み", systemImage: "checkmark")
-                        .font(.caption).foregroundStyle(.secondary)
                 } else {
                     Text(keys.desiredChord(for: keyRole) == nil ? "未設定" : "未登録")
                         .font(.callout).foregroundStyle(.secondary)

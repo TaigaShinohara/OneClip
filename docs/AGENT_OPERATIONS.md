@@ -14,7 +14,7 @@ OneClip を AI エージェントが GUI なしで操作・検証できるよう
 
 | 項目 | 判定 | 根拠 |
 |---|---|---|
-| データの保存場所と形式 | 済 | 撮影画像は `~/Library/Application Support/OneClip/Captures/` に PNG ファイルで保存（`CaptureArchive`、ファイル名 `OneClip-<日時>-<UUID>.png`、注釈の編集コピーは `<元名>-edited-<UUID>.png`）。設定は UserDefaults（ガイド既読フラグ `OneClip.hasSeen*`、ホットキー `OneClip.singleCaptureHotKey.v1` / `OneClip.collectionCaptureHotKey.v1`）。収集セッションと注釈の編集中データはメモリ内のみで永続化されない |
+| データの保存場所と形式 | 済 | 撮影画像は `~/Library/Application Support/OneClip/Captures/` に PNG ファイルで保存（`CaptureArchive`、ファイル名 `OneClip-<日時>-<UUID>.png`、注釈の編集コピーは `<元名>-edited-<UUID>.png`）。設定は UserDefaults（ガイド既読フラグ `OneClip.hasSeen*`、初回ガイドの進捗 `OneClip.completedOnboardingVersion` / `OneClip.onboardingConcern` / `OneClip.onboardingTrialSample`、ホットキー `OneClip.singleCaptureHotKey.v1` / `OneClip.collectionCaptureHotKey.v1`）。収集セッションと注釈の編集中データはメモリ内のみで永続化されない |
 | 業務ロジックの UI からの分離 | 済（混在箇所を特定） | 撮影・収集・注釈は Coordinator / Controller 層に分離されている。ただし撮影パイプライン（`ScreenshotService`、各 Coordinator）は AppKit / ScreenCaptureKit / クリップボードに依存し、ヘッドレスには実行できない |
 | 外部から触れる経路 | 未 | CLI、URL スキーム、AppleScript、XPC のいずれも無い。起動引数には内部検証用フラグ（`--m0-self-test` 等）だけがある |
 | ID の安定性 | 一部 | 保存ファイル名末尾の UUID は安定 ID として使える（再利用なし）。収集素材の ID はセッション内メモリでのみ有効。注釈は UUID を持つがデータとしては永続化されない（PNG へ焼き込まれる） |

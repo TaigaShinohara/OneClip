@@ -70,11 +70,11 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     var hasDiscardConfirmation: Bool { discardWindow != nil || !discardHandlers.isEmpty || endAllWindow != nil }
     var collectionCopyBlocked: Bool {
         updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionConfirmationPending || captureGuideWindow?.isVisible == true
-            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
+            || usageGuideWindow?.isVisible == true || onboardingWindow?.isVisible == true || hasDiscardConfirmation
     }
     var captureEntryBlocked: Bool {
         updateBlocksCapture?() == true || annotationServices.blocksCapture() || resultServices.blocksCapture() || settingsBlockCapture?() == true || collectionPresentationBlocksEntry || captureGuideWindow?.isVisible == true
-            || usageGuideWindow?.isVisible == true || hasDiscardConfirmation
+            || usageGuideWindow?.isVisible == true || onboardingWindow?.isVisible == true || hasDiscardConfirmation
     }
     private var selectionWindow: SelectionWindow?
     private var selectionOwner: CaptureUIOwner?
@@ -85,6 +85,9 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     private var captureGuideCancelled: (@MainActor () -> Void)?
     private var usageGuideWindow: NSWindow?
     private weak var usageReturnWindow: NSWindow?
+    private var onboardingWindow: NSWindow?
+    private weak var onboardingReturnWindow: NSWindow?
+    private var onboardingActivePage = 0
     private var expandedSelectionHelp = false
     private var permissionOwner: CaptureUIOwner?
     private var permissionWindow: NSWindow?
@@ -432,21 +435,102 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
     }
 
     func showWelcomeIfNeeded() {
-        guard !CapturePreferences.shared.hasSeenWelcome else { return }
-        showUsageGuide()
+        guard CapturePreferences.shared.shouldPresentOnboardingOnLaunch else { return }
+        showOnboarding()
+    }
+
+    /// Presents a compact introduction using synthetic examples, without capture or permission requests.
+    func showOnboarding() {
+        if onboardingWindow?.isVisible == true { show(onboardingWindow); return }
+        let replacingUsageGuide = usageGuideWindow?.isVisible == true
+        guard !captureEntryBlocked || replacingUsageGuide,
+              coordinator?.isWorking != true, collectionCoordinator?.isWorking != true,
+              coordinator?.phase != .selecting, coordinator?.phase != .permission,
+              collectionCoordinator?.phase != .selecting, collectionCoordinator?.phase != .permission else { return }
+        if replacingUsageGuide {
+            onboardingReturnWindow = usageReturnWindow
+            usageReturnWindow = nil
+            usageGuideWindow?.orderOut(nil)
+        } else {
+            onboardingReturnWindow = NSApp.keyWindow
+        }
+        onboardingActivePage = 0
+        if onboardingWindow == nil {
+            onboardingWindow = makeWindow(title: "OneClip — はじめての案内", size: NSSize(width: 520, height: 610))
+        }
+        onboardingWindow?.contentView = NSHostingView(rootView: OneClipOnboardingView(
+            preferences: .shared,
+            pageChanged: { [weak self] page in self?.onboardingActivePage = page },
+            completed: { [weak self] concern, sample in
+                self?.completeOnboarding(concern: concern, sample: sample)
+            },
+            skipped: { [weak self] page in
+                self?.skipOnboarding(fromPage: page)
+            },
+            contentSizeChanged: { [weak self] in self?.onboardingContentSizeChanged() }
+        ))
+        show(onboardingWindow)
+        notifyEntryGateChanged()
+    }
+
+    private func completeOnboarding(concern: OnboardingConcern, sample: OnboardingTrialSample) {
+        CapturePreferences.shared.recordOnboardingCompletion(concern: concern, trialSample: sample)
+        let savedReturnWindow = onboardingReturnWindow
+        onboardingReturnWindow = nil
+        onboardingWindow?.orderOut(nil)
+        notifyEntryGateChanged()
+        usageReturnWindow = savedReturnWindow
+        showUsageGuide(initialCollection: concern.prefersCollection, fromOnboarding: true)
+    }
+
+    private func skipOnboarding(fromPage page: Int) {
+        CapturePreferences.shared.recordOnboardingSkip(fromPage: page)
+        onboardingWindow?.orderOut(nil)
+        if NSApp.isActive, let window = onboardingReturnWindow, window.isVisible { window.makeKeyAndOrderFront(nil) }
+        onboardingReturnWindow = nil
+        notifyEntryGateChanged()
+    }
+
+    private func onboardingContentSizeChanged() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.onboardingWindow, window.isVisible else { return }
+            if let scroll = window.contentView as? NSScrollView, let content = scroll.documentView {
+                scroll.documentView = nil
+                window.contentView = content
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            self.resizeToFit(window)
+        }
     }
 
     /// Reading this guide never starts an operation or changes either retained-image owner.
-    func showUsageGuide() {
-        if usageGuideWindow?.isVisible == true { show(usageGuideWindow); return }
-        guard !captureEntryBlocked, coordinator?.isWorking != true, collectionCoordinator?.isWorking != true,
+    func showUsageGuide(initialCollection: Bool? = nil, fromOnboarding: Bool = false) {
+        if usageGuideWindow?.isVisible == true && initialCollection == nil && !fromOnboarding {
+            show(usageGuideWindow)
+            return
+        }
+        let replacingOnboarding = onboardingWindow?.isVisible == true
+        guard !captureEntryBlocked || usageGuideWindow?.isVisible == true || replacingOnboarding,
+              coordinator?.isWorking != true, collectionCoordinator?.isWorking != true,
               coordinator?.phase != .selecting, coordinator?.phase != .permission,
               collectionCoordinator?.phase != .selecting, collectionCoordinator?.phase != .permission else { return }
-        usageReturnWindow = NSApp.keyWindow
+        if replacingOnboarding {
+            CapturePreferences.shared.recordOnboardingSkip(fromPage: onboardingActivePage)
+            if usageReturnWindow == nil {
+                usageReturnWindow = onboardingReturnWindow
+            }
+            onboardingReturnWindow = nil
+            onboardingWindow?.orderOut(nil)
+        } else if usageReturnWindow == nil {
+            usageReturnWindow = NSApp.keyWindow
+        }
         if usageGuideWindow == nil {
             usageGuideWindow = makeWindow(title: "OneClip — 使い方", size: NSSize(width: 500, height: 560))
         }
+        let preferredMode = initialCollection ?? CapturePreferences.shared.preferredInitialCollectionMode
         usageGuideWindow?.contentView = NSHostingView(rootView: CaptureUsageGuideView(
+            collection: preferredMode,
+            reopenOnboarding: { [weak self] in self?.showOnboarding() },
             closed: { [weak self] modes in self?.closeUsageGuide(seenModes: modes) },
             contentSizeChanged: { [weak self] in self?.usageContentSizeChanged() }))
         show(usageGuideWindow)
@@ -624,6 +708,15 @@ final class NativeCaptureInterface: NSObject, SingleCaptureInterface, NSWindowDe
         guard let window = notification.object as? NSWindow else { return }
         if window === endAllWindow {
             answerEndAll(false)
+        } else if window === onboardingWindow {
+            CapturePreferences.shared.recordOnboardingEvent(.closed(fromPageIndex: onboardingActivePage))
+            CapturePreferences.shared.completedOnboardingVersion = CapturePreferences.currentOnboardingVersion
+            CapturePreferences.shared.hasSeenWelcome = true
+            if NSApp.isActive, let returnWindow = onboardingReturnWindow, returnWindow.isVisible {
+                returnWindow.makeKeyAndOrderFront(nil)
+            }
+            onboardingReturnWindow = nil
+            notifyEntryGateChanged()
         } else if window === usageGuideWindow {
             closeUsageGuide()
         } else if window === captureGuideWindow {
@@ -922,7 +1015,7 @@ private final class RegionSelectionView: NSView {
     }
 }
 
-/// The same instructions appear at first use and in the permanent usage guide.
+/// First-use instructions retain the consequences of the next capture action.
 private struct CaptureGuideInstructions: View {
     let collection: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -933,7 +1026,7 @@ private struct CaptureGuideInstructions: View {
             guideStep(symbol: collection ? "1.circle" : "cursorarrow", title: collection ? "必要な箇所を、最大4枚" : "ドラッグで範囲を選択",
                       message: collection
                         ? "範囲を選ぶと素材が追加されます。別のアプリを操作しながら集められます。"
-                        : "1つの画面内でドラッグし、離すとコピー・保存します。右下のプレビューからコメントや記号を追加できます。")
+                        : "1つの画面内でドラッグし、離すとコピー・保存します。")
             Divider()
             guideStep(symbol: collection ? "doc.on.clipboard" : "keyboard", title: collection ? "完成画像を確認してコピー" : "矢印でも選べます",
                       message: collection
@@ -943,8 +1036,8 @@ private struct CaptureGuideInstructions: View {
         .oneClipCard()
         VStack(alignment: .leading, spacing: 8) {
             if collection {
-                Label("取り直しは、新しい範囲を確認してから差し替えます。途中で取り消すと旧素材を残します。", systemImage: "arrow.uturn.backward")
-                Text("収集パネルを閉じても素材は残ります。未コピーの素材・変更の破棄や、未コピー画像を残して終了する時は確認します。スリープ・ロック・ユーザー切替・画面構成変更では素材を破棄します。")
+                Label("取り直しは新旧を確認してから差し替えます。取消なら元の素材を残します。", systemImage: "arrow.uturn.backward")
+                Text("パネルを閉じても素材は残ります。未コピーの素材や変更の破棄は確認します。スリープ・ロック・ユーザー切替・画面構成変更では破棄します。")
                     .foregroundStyle(.secondary)
             } else {
                 Label("確定すると、今のクリップボードを置き換えます。", systemImage: "doc.on.clipboard")
@@ -1012,7 +1105,7 @@ struct CaptureGuideView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            OneClipHeading(title: collection ? "必要なところを集めて、ひと貼り" : "必要なところを選んで、コピー",
+            OneClipHeading(title: collection ? "集めてコピー" : "範囲をコピー",
                            systemName: collection ? "square.stack" : "viewfinder", tone: tone)
             CaptureGuideInstructions(collection: collection)
             HStack {
@@ -1029,64 +1122,82 @@ struct CaptureGuideView: View {
 }
 
 struct CaptureUsageGuideView: View {
+    let reopenOnboarding: () -> Void
     let closed: (Set<Bool>) -> Void
     let contentSizeChanged: () -> Void
     @State private var collection: Bool
     @State private var viewedModes: Set<Bool>
     @State private var showsOperationDetails = false
+    @Environment(\.colorScheme) private var colorScheme
 
-    init(collection: Bool = false, closed: @escaping (Set<Bool>) -> Void,
+    init(collection: Bool = false,
+         reopenOnboarding: @escaping () -> Void = {},
+         closed: @escaping (Set<Bool>) -> Void,
          contentSizeChanged: @escaping () -> Void = {}) {
+        self.reopenOnboarding = reopenOnboarding
         self.closed = closed
         self.contentSizeChanged = contentSizeChanged
         _collection = State(initialValue: collection)
         _viewedModes = State(initialValue: [collection])
     }
 
+    private var activeTone: OneClipTone {
+        collection ? .collection : .single
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                Image(systemName: "viewfinder")
-                    .font(.system(size: 25, weight: .medium))
-                    .foregroundStyle(.secondary).accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("OneClipの使い方").font(.title2.weight(.semibold))
-                    Text("必要なところを集めて、ひと貼り")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            Text("画面上部のOneClipメニューから撮影できます。\nキーは「設定…」で設定・変更できます。")
-                .font(.callout).foregroundStyle(.secondary)
-                .lineSpacing(3).fixedSize(horizontal: false, vertical: true)
-            Picker("撮影の使い方", selection: $collection) {
-                Text("範囲をコピー").tag(false)
-                Text("集めてコピー").tag(true)
-            }
-            .pickerStyle(.segmented).labelsHidden()
+        VStack(alignment: .leading, spacing: 18) {
+            OneClipHeading(title: "OneClipの使い方",
+                           systemName: collection ? "square.stack" : "viewfinder",
+                           tone: activeTone)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text(collection ? "集めて、一枚に" : "ドラッグして、離すだけ")
-                    .font(.title3.weight(.semibold))
-                Text(collection
-                     ? "1つの画面内で範囲を選び、最大4枚を追加します。"
-                     : "1つの画面内で範囲を選択。離すとコピー・保存します。")
-                CaptureUsageDiagram(collection: collection)
-                    .frame(height: 82).frame(maxWidth: .infinity)
-                    .accessibilityHidden(true)
-                if collection {
-                    Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
+                Picker("撮影の使い方", selection: $collection) {
+                    Text("範囲をコピー").tag(false)
+                    Text("集めてコピー").tag(true)
                 }
-                Text("右下のプレビューからコメントや記号を追加できます。")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.callout).lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .oneClipCard(padding: 18)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
 
-            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(collection ? "集めて、一枚に" : "ドラッグして、離すだけ")
+                        .font(.title3.weight(.semibold))
+                    Text(collection
+                         ? "1つの画面内で範囲を選び、最大4枚を追加します。"
+                         : "1つの画面内で範囲を選択。離すとコピー・保存します。")
+                    CaptureUsageDiagram(collection: collection)
+                        .frame(height: 82)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityHidden(true)
+                    if collection {
+                        Text("撮影順に並ぶ完成画像を確認し、最後に「コピー」でコピー・保存します。")
+                    }
+                    Label("撮影後の小画像から注釈を追加できます。", systemImage: "text.bubble")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .oneClipCard(padding: 18)
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                noticeRow(systemName: "menubar.rectangle",
+                          text: "メニューバーから撮影。キーの変更は「設定…」へ。")
+                noticeRow(systemName: "doc.on.clipboard",
+                          text: collection
+                          ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
+                          : "確定すると、今のクリップボードを置き換えます。")
+                noticeRow(systemName: "internaldrive",
+                          text: "画像はこのMacに自動保存され、終了・ロック後も残ります。保存期限はありません。")
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                Divider()
                 DisclosureGroup(collection ? "操作と素材の扱い" : "キーボードでの操作",
                                 isExpanded: $showsOperationDetails) {
-                    operationDetails.padding(.top, 10)
+                    operationDetails.padding(.top, 8)
                 }
                 Divider()
                 CaptureDataNotice(title: "保存・権限の詳細", includesPermissionNotice: true,
@@ -1094,27 +1205,22 @@ struct CaptureUsageGuideView: View {
             }
             .font(.callout)
 
-            VStack(alignment: .leading, spacing: 10) {
-                Label(collection
-                      ? "収集中はクリップボードを変更しません。最後の「コピー」で置き換えます。"
-                      : "確定すると、今のクリップボードを置き換えます。",
-                      systemImage: "doc.on.clipboard")
-                Label("完成画像はこのMacに自動保存されます。\n終了・ロック後も残り、保存期限はありません。",
-                      systemImage: "internaldrive")
-            }
-            .font(.callout).lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-
             Divider()
-            HStack(alignment: .center, spacing: 16) {
-                Text("使い方はメニュー・設定からいつでも確認できます。")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("初回ガイドをもう一度見る…", action: reopenOnboarding)
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                }
                 Spacer(minLength: 0)
                 Button("わかりました") { closed(viewedModes.union([collection])) }
-                    .keyboardShortcut(.defaultAction).buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .tint(activeTone.color(for: colorScheme))
             }
-            .buttonBorderShape(.capsule).controlSize(.large)
+            .buttonBorderShape(.capsule)
+            .controlSize(.large)
         }
         .oneClipWindow().frame(width: 500, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
@@ -1123,6 +1229,20 @@ struct CaptureUsageGuideView: View {
             contentSizeChanged()
         }
         .onChange(of: showsOperationDetails) { _, _ in contentSizeChanged() }
+    }
+
+    private func noticeRow(systemName: String, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: systemName)
+                .foregroundStyle(.secondary)
+                .frame(width: 18, alignment: .center)
+                .padding(.top, 2)
+                .accessibilityHidden(true)
+            Text(text)
+                .font(.callout)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var operationDetails: some View {
@@ -1155,18 +1275,18 @@ private struct CaptureUsageDiagram: View {
                     ForEach(1..<4) { number in
                         VStack(spacing: 5) {
                             Text("\(number)").font(.caption2.monospacedDigit())
-                            RoundedRectangle(cornerRadius: 2).fill(accent.opacity(0.35))
+                            RoundedRectangle(cornerRadius: 2, style: .continuous).fill(accent.opacity(0.35))
                                 .frame(width: 21, height: CGFloat(12 + number * 4))
                         }
                         .padding(7)
                         .frame(width: 38, height: 60)
-                        .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(outline))
+                        .background(accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(outline))
                     }
                 }
             } else {
                 ZStack(alignment: .bottomTrailing) {
-                    RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.035))
+                    RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.035))
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(0..<3) { index in
                             Capsule().fill(Color.primary.opacity(0.14))
@@ -1182,7 +1302,7 @@ private struct CaptureUsageDiagram: View {
                         .foregroundStyle(Color.primary).padding(.trailing, 4).padding(.bottom, 1)
                 }
                 .frame(width: 146, height: 78)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(outline))
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(outline))
             }
 
             Image(systemName: "arrow.right").font(.system(size: 18, weight: .medium))
@@ -1453,5 +1573,578 @@ struct CaptureProblemView: View {
         .oneClipWindow().frame(width: 480, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
             .onExitCommand { interface.closeProblem() }
+    }
+}
+
+// MARK: - Compact onboarding (one task per page)
+
+enum OnboardingPageRole: String, Equatable, Sendable {
+    case identity, selection, interaction, match, connection
+}
+
+struct OnboardingWindowDots: Equatable, Sendable {
+    enum ScaleKind: Equatable, Sendable {
+        case current
+        case neighbor
+        case edgeCompressed
+    }
+
+    struct DotItem: Equatable, Sendable, Identifiable {
+        let pageIndex: Int
+        let isCurrent: Bool
+        let scaleKind: ScaleKind
+        var id: Int { pageIndex }
+    }
+
+    /// Computes at most 5 visible dots centered around `currentPage`:
+    /// `window = min(5, totalPages)`, `start = clamp(currentPage - 2, 0, totalPages - window)`.
+    static func compute(currentPage: Int, totalPages: Int) -> [DotItem] {
+        guard totalPages > 0 else { return [] }
+        let windowSize = min(5, totalPages)
+        let clampedCurrent = min(max(0, currentPage), totalPages - 1)
+        let start = min(max(0, clampedCurrent - 2), max(0, totalPages - windowSize))
+        let end = start + windowSize - 1
+        return (start...end).map { page in
+            let isCurrent = page == clampedCurrent
+            let isCompressedLeft = page == start && start > 0 && !isCurrent
+            let isCompressedRight = page == end && end < totalPages - 1 && !isCurrent
+            let kind: ScaleKind = isCurrent ? .current : ((isCompressedLeft || isCompressedRight) ? .edgeCompressed : .neighbor)
+            return DotItem(pageIndex: page, isCurrent: isCurrent, scaleKind: kind)
+        }
+    }
+}
+
+struct OnboardingPageSpec: Equatable, Sendable, Identifiable {
+    let index: Int
+    let role: OnboardingPageRole
+    let headline: String
+    let subtitle: String
+    let tone: OneClipTone
+    let heroDescription: String
+    var id: Int { index }
+    var pageNumber: Int { index + 1 }
+    var requiresChoiceToAdvance: Bool { role == .selection || role == .interaction }
+}
+
+enum OnboardingPageCatalog {
+    static let totalPageCount = 5
+
+    static func pages(for concern: OnboardingConcern, trialSample: OnboardingTrialSample) -> [OnboardingPageSpec] {
+        let tone: OneClipTone = concern.prefersCollection ? .collection : .single
+        return [
+            .init(index: 0, role: .identity, headline: "必要なところを、ひと貼り",
+                  subtitle: "画面上部のOneClipメニューから撮り方を選びます。", tone: .single,
+                  heroDescription: "OneClipメニュー。範囲をコピーは1箇所、集めてコピーは最大4枚を1枚にまとめます。"),
+            .init(index: 1, role: .selection, headline: "何を伝えたいですか？",
+                  subtitle: "使い始める撮り方を選びます。あとから変更できます。", tone: .single,
+                  heroDescription: "用途を選ぶ4つのボタン。選ぶと範囲選択の練習へ進みます。"),
+            .init(index: 2, role: .interaction, headline: "試しに範囲を選ぶ",
+                  subtitle: "枠をクリック、またはドラッグします。実際の画面の撮影・コピー・保存は行いません。", tone: tone,
+                  heroDescription: "架空の画面にある3つの範囲。ドラッグまたはボタンで選べます。"),
+            .init(index: 3, role: .match, headline: "撮影後は、ここから注釈",
+                  subtitle: "本番では右下の小画像からコメントや記号を追加できます。", tone: tone,
+                  heroDescription: "選んだ「\(trialSample.title)」の見本。小画像にコメント・記号を追加する入口があります。"),
+            .init(index: 4, role: .connection, headline: "メニューから始めましょう",
+                  subtitle: "撮影画像はこのMacへ自動保存されます。必要なときだけ画面収録の許可を案内します。", tone: tone,
+                  heroDescription: concern.connectionButtonTitle)
+        ]
+    }
+}
+
+struct OneClipOnboardingView: View {
+    let preferences: CapturePreferences
+    var pageChanged: (Int) -> Void = { _ in }
+    let completed: (OnboardingConcern, OnboardingTrialSample) -> Void
+    let skipped: (Int) -> Void
+    var contentSizeChanged: () -> Void = {}
+
+    @State private var currentPage = 0
+    @State private var selectedConcern: OnboardingConcern
+    @State private var selectedTrialSample: OnboardingTrialSample
+    @State private var heroEntered = false
+    @State private var mockDragStart: CGPoint?
+    @State private var mockDragCurrent: CGPoint?
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(preferences: CapturePreferences = .shared,
+         pageChanged: @escaping (Int) -> Void = { _ in },
+         completed: @escaping (OnboardingConcern, OnboardingTrialSample) -> Void,
+         skipped: @escaping (Int) -> Void,
+         contentSizeChanged: @escaping () -> Void = {}) {
+        self.preferences = preferences
+        self.pageChanged = pageChanged
+        self.completed = completed
+        self.skipped = skipped
+        self.contentSizeChanged = contentSizeChanged
+        _selectedConcern = State(initialValue: preferences.selectedOnboardingConcern ?? .multi)
+        _selectedTrialSample = State(initialValue: preferences.completedOnboardingTrial ?? .issueArea)
+    }
+
+    private var pages: [OnboardingPageSpec] {
+        OnboardingPageCatalog.pages(for: selectedConcern, trialSample: selectedTrialSample)
+    }
+
+    private var page: OnboardingPageSpec {
+        let all = pages
+        return all[min(max(0, currentPage), all.count - 1)]
+    }
+
+    private var accentColor: Color {
+        page.tone.color(for: colorScheme)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            topNavigationBar
+            headlineAndSubtitleSection
+            heroStageView
+                .frame(height: 224)
+                .frame(maxWidth: .infinity)
+                .accessibilityElement(children: page.requiresChoiceToAdvance ? .contain : .ignore)
+                .accessibilityLabel(page.heroDescription)
+            bottomActionSection
+        }
+        .oneClipWindow(padding: 26)
+        .frame(width: 520, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .onAppear {
+            recordView(for: 0)
+            triggerPageAnimations()
+        }
+        .onChange(of: currentPage) { _, newPage in
+            pageChanged(newPage)
+            recordView(for: newPage)
+            triggerPageAnimations()
+            contentSizeChanged()
+        }
+        .onExitCommand { skipped(currentPage) }
+    }
+
+    // MARK: Navigation
+
+    private var topNavigationBar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Button(action: goBackNeutral) {
+                Label("戻る", systemImage: "chevron.left")
+                    .font(.callout.weight(.medium))
+            }
+            .buttonStyle(.borderless)
+            .opacity(currentPage > 0 ? 1 : 0)
+            .disabled(currentPage == 0)
+            .accessibilityHidden(currentPage == 0)
+
+            Spacer(minLength: 0)
+
+            OnboardingWindowDotsView(
+                currentPage: currentPage,
+                totalPages: pages.count,
+                accentColor: accentColor
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("全\(pages.count)ページ中\(currentPage + 1)ページ")
+
+            Spacer(minLength: 0)
+
+            Button("スキップ") {
+                skipped(currentPage)
+            }
+            .buttonStyle(.borderless)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private var headlineAndSubtitleSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(page.headline)
+                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                .fixedSize(horizontal: false, vertical: true)
+            Text(page.subtitle)
+                .font(.body).foregroundStyle(.secondary).lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(minHeight: 88, alignment: .topLeading)
+    }
+
+    // MARK: Synthetic illustrations and practice
+
+    private var heroStageView: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.045) : Color(nsColor: .controlBackgroundColor))
+                .shadow(color: .black.opacity(colorScheme == .dark ? 0.07 : 0.035), radius: 10, y: 3)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(contrast == .increased ? 0.45 : 0.05))
+
+            stageContent(for: page)
+                .padding(18)
+                .opacity(heroEntered ? 1.0 : 0.0)
+                .offset(y: heroEntered || reduceMotion ? 0 : 8)
+        }
+        .clipped()
+    }
+
+    @ViewBuilder
+    private func stageContent(for spec: OnboardingPageSpec) -> some View {
+        switch spec.role {
+        case .identity: identityStageView
+        case .selection: concernSelectionStageView
+        case .interaction: interactionTrialStageView
+        case .match: trialResultStageView
+        case .connection: connectionStageView
+        }
+    }
+
+    // Choosing a use case advances directly to the synthetic practice.
+    private var concernSelectionStageView: some View {
+        VStack(spacing: 8) {
+            ForEach(OnboardingConcern.allCases) { option in
+                let isSelected = selectedConcern == option
+                Button {
+                    chooseConcern(option)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: option.optionSymbol)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(selectedConcern == option ? accentColor : .secondary)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle().fill((selectedConcern == option ? accentColor : Color.primary).opacity(0.10))
+                            )
+                        Text(option.optionTitle)
+                            .font(.callout.weight(selectedConcern == option ? .semibold : .regular))
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(isSelected ? accentColor : .secondary.opacity(0.6))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(isSelected ? accentColor.opacity(0.14) : Color.primary.opacity(0.035))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .strokeBorder(isSelected ? accentColor : Color.primary.opacity(contrast == .increased ? 0.35 : 0.08),
+                                          lineWidth: isSelected ? 1.5 : 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(option.optionTitle)。押すと自動で次のページへ進みます")
+            }
+        }
+    }
+
+    // The two capture modes share the existing menu labels.
+    private var identityStageView: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(accentColor, in: Capsule())
+                Text("OneClip")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text("14:20")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 10) {
+                    Image(systemName: "viewfinder")
+                        .foregroundStyle(OneClipTone.single.color(for: colorScheme))
+                    Text("範囲をコピー")
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    Text("1箇所をすぐ貼る")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(8)
+                .background(OneClipTone.single.color(for: colorScheme).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+                HStack(spacing: 10) {
+                    Image(systemName: "square.stack")
+                        .foregroundStyle(OneClipTone.collection.color(for: colorScheme))
+                    Text("集めてコピー…")
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    Text("最大4枚を1枚に")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(8)
+                .background(OneClipTone.collection.color(for: colorScheme).opacity(0.10),
+                            in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .padding(10)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.primary.opacity(0.12)))
+            .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.92, anchor: .top)
+        }
+        .frame(maxWidth: 360)
+    }
+
+    // The practice uses shapes only and never captures, saves or copies.
+    private var interactionTrialStageView: some View {
+        VStack(spacing: 10) {
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.primary.opacity(0.03))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.14), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    )
+
+                HStack(spacing: 10) {
+                    ForEach(OnboardingTrialSample.allCases) { sample in
+                        Button {
+                            completeMiniTrial(with: sample)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Image(systemName: sample.symbol)
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(accentColor)
+                                    Spacer()
+                                    Text(sample.dimensionsLabel)
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(sample.title)
+                                    .font(.callout.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                    .fill(accentColor.opacity(0.14))
+                                    .frame(height: 28)
+                                    .overlay(
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "viewfinder")
+                                                .font(.caption2)
+                                            Text("ここを選ぶ")
+                                                .font(.caption2.weight(.medium))
+                                        }
+                                        .foregroundStyle(accentColor)
+                                    )
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color(nsColor: .windowBackgroundColor))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(accentColor.opacity(0.45),
+                                                  style: StrokeStyle(lineWidth: 1.2, dash: [5, 3]))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(sample.title)、\(sample.dimensionsLabel)。押すと切り取って結果ページへ進みます")
+                    }
+                }
+                .padding(12)
+
+                if let start = mockDragStart, let current = mockDragCurrent {
+                    let rect = CGRect(x: min(start.x, current.x),
+                                      y: min(start.y, current.y),
+                                      width: abs(current.x - start.x),
+                                      height: abs(current.y - start.y))
+                    Rectangle()
+                        .fill(accentColor.opacity(0.18))
+                        .frame(width: max(8, rect.width), height: max(8, rect.height))
+                        .overlay(Rectangle().stroke(accentColor, style: StrokeStyle(lineWidth: 2, dash: [5, 4])))
+                        .offset(x: rect.minX, y: rect.minY)
+                        .allowsHitTesting(false)
+                }
+            }
+            .frame(height: 136)
+            .gesture(
+                DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                    .onChanged { value in
+                        mockDragStart = value.startLocation
+                        mockDragCurrent = value.location
+                    }
+                    .onEnded { value in
+                        mockDragStart = nil
+                        mockDragCurrent = nil
+                        let third = 440.0 / 3.0
+                        let picked: OnboardingTrialSample
+                        if value.location.x < third {
+                            picked = .issueArea
+                        } else if value.location.x < third * 2 {
+                            picked = .settingsValue
+                        } else {
+                            picked = .afterResult
+                        }
+                        completeMiniTrial(with: picked)
+                    }
+            )
+        }
+    }
+
+    // The result is explicitly a mock, with the annotation entry shown.
+    private var trialResultStageView: some View {
+        HStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(accentColor)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("切り取りの見本")
+                            .font(.callout.weight(.semibold))
+                        Text("\(selectedTrialSample.title)・\(selectedTrialSample.dimensionsLabel)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                HStack(spacing: 8) {
+                    Label("コメント・記号を追加", systemImage: "pencil.tip.crop.circle")
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(accentColor.opacity(0.14), in: Capsule())
+                        .foregroundStyle(accentColor)
+                }
+            }
+            .padding(14)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(accentColor.opacity(0.45), lineWidth: 1.5))
+            .scaleEffect(heroEntered || reduceMotion ? 1.0 : 0.86)
+        }
+    }
+
+    // Continue to the mode guide without starting a capture.
+    private var connectionStageView: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                OneClipBadge(systemName: selectedConcern.prefersCollection ? "square.stack" : "viewfinder",
+                             tone: page.tone, size: 52)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(selectedConcern.prefersCollection ? "集めてコピー" : "範囲をコピー")
+                        .font(.headline)
+                    Text(selectedConcern.prefersCollection ? "最大4枚を選ぶ → コピー → ⌘Vで貼り付け" : "範囲を選ぶ → ⌘Vで貼り付け")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .background(accentColor.opacity(0.09), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(accentColor.opacity(0.35)))
+        }
+    }
+
+    private var bottomActionSection: some View {
+        HStack {
+            Spacer(minLength: 0)
+            if page.role == .connection {
+                Button(selectedConcern.connectionButtonTitle) {
+                    completed(selectedConcern, selectedTrialSample)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
+            } else if !page.requiresChoiceToAdvance {
+                Button("次へ", action: advance)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .buttonBorderShape(.capsule).controlSize(.large).tint(accentColor)
+    }
+
+    private func advance() {
+        guard !page.requiresChoiceToAdvance, currentPage < pages.count - 1 else { return }
+        currentPage += 1
+    }
+
+    private func goBackNeutral() {
+        guard currentPage > 0 else { return }
+        currentPage -= 1
+    }
+
+    private func chooseConcern(_ concern: OnboardingConcern) {
+        guard page.role == .selection else { return }
+        selectedConcern = concern
+        preferences.recordOnboardingEvent(.concernSelected(concern))
+        currentPage += 1
+    }
+
+    private func completeMiniTrial(with sample: OnboardingTrialSample) {
+        guard page.role == .interaction else { return }
+        selectedTrialSample = sample
+        preferences.recordOnboardingEvent(.trialCompleted(sample))
+        currentPage += 1
+    }
+
+    private func triggerPageAnimations() {
+        heroEntered = false
+        if reduceMotion {
+            heroEntered = true
+        } else {
+            withAnimation(.easeOut(duration: 0.18)) { heroEntered = true }
+        }
+    }
+
+    private func recordView(for index: Int) {
+        let all = pages
+        guard index >= 0 && index < all.count else { return }
+        preferences.recordOnboardingEvent(.pageViewed(pageIndex: index, role: all[index].role.rawValue))
+    }
+}
+
+private struct OnboardingWindowDotsView: View {
+    let currentPage: Int
+    let totalPages: Int
+    let accentColor: Color
+
+    var body: some View {
+        let items = OnboardingWindowDots.compute(currentPage: currentPage, totalPages: totalPages)
+        HStack(spacing: 6) {
+            ForEach(items) { item in
+                Capsule(style: .continuous)
+                    .fill(dotColor(for: item))
+                    .frame(width: dotWidth(for: item), height: dotHeight(for: item))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func dotColor(for item: OnboardingWindowDots.DotItem) -> Color {
+        if item.isCurrent {
+            return accentColor
+        }
+        return Color.primary.opacity(item.scaleKind == .edgeCompressed ? 0.16 : 0.26)
+    }
+
+    private func dotWidth(for item: OnboardingWindowDots.DotItem) -> CGFloat {
+        switch item.scaleKind {
+        case .current: return 22
+        case .neighbor: return 7
+        case .edgeCompressed: return 5
+        }
+    }
+
+    private func dotHeight(for item: OnboardingWindowDots.DotItem) -> CGFloat {
+        switch item.scaleKind {
+        case .current, .neighbor: return 7
+        case .edgeCompressed: return 5
+        }
     }
 }
